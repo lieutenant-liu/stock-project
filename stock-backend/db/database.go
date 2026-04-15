@@ -196,6 +196,38 @@ func InitDB() {
 	CREATE UNIQUE INDEX IF NOT EXISTS idx_api_tokens_provider_token ON api_tokens(provider, token);
 	CREATE INDEX IF NOT EXISTS idx_api_tokens_provider_active ON api_tokens(provider, is_active, enabled, priority);`
 
+	// 12. 自动同步配置 (单行配置)
+	createAutoSyncConfigTable := `
+	CREATE TABLE IF NOT EXISTS auto_sync_config (
+		id INTEGER PRIMARY KEY CHECK (id = 1),
+		enabled INTEGER NOT NULL DEFAULT 0,
+		timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',
+		daily_run_time TEXT NOT NULL DEFAULT '19:00',
+		lookback_days INTEGER NOT NULL DEFAULT 7,
+		retry_limit INTEGER NOT NULL DEFAULT 6,
+		retry_backoff_sec INTEGER NOT NULL DEFAULT 30,
+		last_run_date TEXT DEFAULT '',
+		updated_at TEXT NOT NULL
+	);`
+
+	// 13. 自动同步运行记录
+	createAutoSyncRunsTable := `
+	CREATE TABLE IF NOT EXISTS auto_sync_runs (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		run_date TEXT NOT NULL,
+		trigger_type TEXT NOT NULL,
+		status TEXT NOT NULL,
+		started_at TEXT NOT NULL,
+		finished_at TEXT DEFAULT '',
+		network_failures INTEGER NOT NULL DEFAULT 0,
+		error_msg TEXT DEFAULT '',
+		summary_json TEXT DEFAULT '',
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL
+	);
+	CREATE INDEX IF NOT EXISTS idx_auto_sync_runs_date ON auto_sync_runs(run_date);
+	CREATE INDEX IF NOT EXISTS idx_auto_sync_runs_status ON auto_sync_runs(status);`
+
 	// 💥 黎明扫荡：物理销毁旧时代的打卡本！
 	DB.Exec(`DROP TABLE IF EXISTS sync_history;`)
 	DB.Exec(`DROP TABLE IF EXISTS sync_history_fund;`)
@@ -205,7 +237,8 @@ func InitDB() {
 	tables := []string{
 		createCalTable, createBasicTable, createKlineTable,
 		createAdjTable, createFundTable, createFinaTable,
-		createMoneyFlowTable, createStkLimitTable, createIndexTable, createPositionTable, createAPITokenTable,
+		createMoneyFlowTable, createStkLimitTable, createIndexTable, createPositionTable,
+		createAPITokenTable, createAutoSyncConfigTable, createAutoSyncRunsTable,
 	}
 	for _, sqlStr := range tables {
 		if _, err = DB.Exec(sqlStr); err != nil {

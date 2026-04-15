@@ -5,6 +5,7 @@ import DataAuditPanel from './components/DataAuditPanel'
 import PositionRiskPanel from './components/PositionRiskPanel'
 import StrategyScanPanel from './components/StrategyScanPanel'
 import TokenManagerPanel from './components/TokenManagerPanel'
+import AutoSyncPanel from './components/AutoSyncPanel'
 import './App.css'
 
 function App() {
@@ -341,6 +342,7 @@ function App() {
       />
 
       <TokenManagerPanel onTokenActivated={() => setTushareToken('')} />
+      <AutoSyncPanel />
 
       <DataAuditPanel
         runDataAudit={runDataQualityCheck}

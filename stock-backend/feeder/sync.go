@@ -96,6 +96,15 @@ var (
 	logMutex  sync.Mutex
 )
 
+type SyncSummary struct {
+	Module   string `json:"module"`
+	Total    int    `json:"total"`
+	Targeted int    `json:"targeted"`
+	Success  int    `json:"success"`
+	Failed   int    `json:"failed"`
+	Skipped  int    `json:"skipped"`
+}
+
 // LogMsg 替代 fmt.Printf，同时输出到终端和前端内存环！
 func LogMsg(format string, a ...interface{}) {
 	msg := fmt.Sprintf(format, a...)
@@ -123,8 +132,9 @@ func GetLogs() []string {
 // 💥 引擎 A：专属 K 线抽水机
 // 💥 引擎 A：专属 K 线抽水机 (V3.0 动态射速版)
 // 💥 引擎 A：专属 K 线抽水机 (黎明扫荡版：精确填缝)
-func StartSyncKLine(provider DataProvider, stockCodes []string, targetStart string, targetEnd string) {
+func StartSyncKLine(provider DataProvider, stockCodes []string, targetStart string, targetEnd string) SyncSummary {
 	total := len(stockCodes)
+	summary := SyncSummary{Module: "kline", Total: total}
 	LogMsg("🚀 [抽水机A] K线引擎启动！当前源:[%s]\n", provider.GetName())
 	// 💥 补上这段火力权重判定
 	targetTrust := 50
@@ -134,8 +144,10 @@ func StartSyncKLine(provider DataProvider, stockCodes []string, targetStart stri
 	for i, code := range stockCodes {
 		actualStart, actualEnd, needSync := db.GetDailySyncTaskRange("daily_klines", code, targetStart, targetEnd, targetTrust)
 		if !needSync {
+			summary.Skipped++
 			continue // 静默跳过，减少日志噪音
 		}
+		summary.Targeted++
 
 		LogMsg("⏳ [K线 %d/%d] 发现空洞，准备拉取 %s...", i+1, total, code)
 
@@ -153,6 +165,7 @@ func StartSyncKLine(provider DataProvider, stockCodes []string, targetStart stri
 		if err == nil && len(history) > 0 {
 			// 💥 数据打入汇聚管线
 			PushToSink("kline", code, history)
+			summary.Success++
 		} else if err == nil && len(history) == 0 {
 			// =======================================================
 			// 💥 终极修复：停牌股补漏机制！
@@ -179,17 +192,23 @@ func StartSyncKLine(provider DataProvider, stockCodes []string, targetStart stri
 			rows.Close()
 			if len(ghostKLines) > 0 {
 				PushToSink("kline", code, ghostKLines)
+				summary.Success++
+			} else {
+				summary.Failed++
 			}
 		} else {
 			LogMsg("❌ [K线 %d/%d] %s 失败: %v", i+1, total, code, err)
+			summary.Failed++
 		}
 	}
 	LogMsg("🎉 [抽水机A] K线填缝网络拉取阶段完成！(请等待 Sink 落盘)\n")
+	return summary
 }
 
 // 💥 引擎 B：专属基本面抽水机 (黎明扫荡版：异步单点汇聚)
-func StartSyncFund(provider DataProvider, stockCodes []string, targetStart string, targetEnd string) {
+func StartSyncFund(provider DataProvider, stockCodes []string, targetStart string, targetEnd string) SyncSummary {
 	total := len(stockCodes)
+	summary := SyncSummary{Module: "fund", Total: total}
 	LogMsg("💎 [抽水机B] 基本面引擎启动！\n")
 	// 💥 补上这段火力权重判定
 	targetTrust := 50
@@ -200,8 +219,10 @@ func StartSyncFund(provider DataProvider, stockCodes []string, targetStart strin
 		actualStart, actualEnd, needSync := db.GetDailySyncTaskRange("daily_fundamentals", code, targetStart, targetEnd, targetTrust)
 
 		if !needSync {
+			summary.Skipped++
 			continue // 静默跳过，避免刷屏
 		}
+		summary.Targeted++
 
 		LogMsg("⏳ [基本面 %d/%d] 发现空洞！定向拉取 %s (%s~%s)...\n", i+1, total, code, actualStart, actualEnd)
 
@@ -219,6 +240,7 @@ func StartSyncFund(provider DataProvider, stockCodes []string, targetStart strin
 
 		if err != nil {
 			LogMsg("❌ [基本面 %d/%d] %s 彻底失败！交由对账员下次处理。\n", i+1, total, code)
+			summary.Failed++
 			continue
 		}
 
@@ -226,16 +248,20 @@ func StartSyncFund(provider DataProvider, stockCodes []string, targetStart strin
 			// 💥 正确做法：打入异步管线，Worker 立即转身去拉下一个股票！
 			// 参数 1: 必须是 "fund" 字符串，让 Sink 路由知道调哪个表
 			PushToSink("fund", code, funds)
+			summary.Success++
 		} else {
 			LogMsg("⚠️ [基本面 %d/%d] %s 返回 0 条数据\n", i+1, total, code)
+			summary.Failed++
 		}
 	}
 	LogMsg("🎉 [抽水机B] 基本面网络拉取填缝完成！(等待后台 Sink 落盘)\n")
+	return summary
 }
 
 // 💥 引擎 C：专属复权因子抽水机
-func StartSyncAdjFactors(provider DataProvider, stockCodes []string, targetStart string, targetEnd string) {
+func StartSyncAdjFactors(provider DataProvider, stockCodes []string, targetStart string, targetEnd string) SyncSummary {
 	total := len(stockCodes)
+	summary := SyncSummary{Module: "adj", Total: total}
 	LogMsg("🧬 [抽水机C] 复权因子引擎启动！当前源:[%s]\n", provider.GetName())
 
 	targetTrust := 50
@@ -247,8 +273,10 @@ func StartSyncAdjFactors(provider DataProvider, stockCodes []string, targetStart
 		// 💥 接入天眼系统！
 		actualStart, actualEnd, needSync := db.GetDailySyncTaskRange("adj_factors", code, targetStart, targetEnd, targetTrust)
 		if !needSync {
+			summary.Skipped++
 			continue // 静默跳过，保护 Tushare 积分！
 		}
+		summary.Targeted++
 
 		LogMsg("⏳ [复权 %d/%d] 发现断层！正在拉取并推导 %s (%s~%s)...", i+1, total, code, actualStart, actualEnd)
 
@@ -265,17 +293,24 @@ func StartSyncAdjFactors(provider DataProvider, stockCodes []string, targetStart
 
 		if err != nil {
 			LogMsg("❌ [复权 %d/%d] %s 彻底失败！", i+1, total, code)
+			summary.Failed++
 			continue
 		}
 
 		if len(factors) > 0 {
 			PushToSink("adj", code, factors)
+			summary.Success++
+		} else {
+			summary.Failed++
 		}
 	}
 	LogMsg("🎉 [抽水机C] 复权因子网络拉取完成！\n")
+	return summary
 }
+
 // 💥 引擎 G：专属涨跌榜抽水机 (通过日历智能推导区间)
-func StartSyncStkLimit(provider DataProvider, targetStart string, targetEnd string) {
+func StartSyncStkLimit(provider DataProvider, targetStart string, targetEnd string) SyncSummary {
+	summary := SyncSummary{Module: "stklimit"}
 	LogMsg("🔥 [抽水机G] 涨跌停引擎启动！当前源:[%s]", provider.GetName())
 
 	// 调用我们刚刚写好的日历雷达，直接锁定所有空洞日期！
@@ -283,9 +318,12 @@ func StartSyncStkLimit(provider DataProvider, targetStart string, targetEnd stri
 
 	if len(missingDates) == 0 {
 		LogMsg("✅ [抽水机G] 目标区间涨跌停数据严丝合缝，无需重复拉取！")
-		return
+		summary.Skipped = 1
+		return summary
 	}
 
+	summary.Total = len(missingDates)
+	summary.Targeted = len(missingDates)
 	LogMsg("⏳ [抽水机G] 发现 %d 个交易日缺失数据，开始逐日补齐...", len(missingDates))
 	totalSaved := 0
 
@@ -296,12 +334,14 @@ func StartSyncStkLimit(provider DataProvider, targetStart string, targetEnd stri
 		if err != nil {
 			LogMsg("⚠️ [抽水机G] %s 报错: %v", d, err)
 			time.Sleep(2 * time.Second) // 遇到错误冷静两秒
+			summary.Failed++
 			continue
 		}
 
 		if len(limits) > 0 {
 			PushToSink("stklimit", "ALL", limits)
 			totalSaved += len(limits)
+			summary.Success++
 		} else {
 			// 打上幽灵标记防死循环
 			ghost := []tushare.StkLimit{{
@@ -311,6 +351,7 @@ func StartSyncStkLimit(provider DataProvider, targetStart string, targetEnd stri
 				TrustLevel: -1,
 			}}
 			PushToSink("stklimit", "ALL", ghost)
+			summary.Success++
 		}
 
 		if (i+1)%50 == 0 || i == len(missingDates)-1 {
@@ -318,4 +359,5 @@ func StartSyncStkLimit(provider DataProvider, targetStart string, targetEnd stri
 		}
 	}
 	LogMsg("🎉 [抽水机G] 涨跌停底座历史扫荡完成！共推入真实数据: %d 条！", totalSaved)
+	return summary
 }

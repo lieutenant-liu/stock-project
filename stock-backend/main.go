@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"stock-backend/api"
+	"stock-backend/autosync"
 	"stock-backend/db"
 	"stock-backend/feeder"
 	"stock-backend/tushare"
@@ -13,6 +14,8 @@ import (
 	"strings"
 	"time"
 )
+
+var autoSyncManager = autosync.NewManager()
 
 func setCORSHeaders(w http.ResponseWriter) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -330,6 +333,138 @@ func syncActiveProviderToken(provider string) {
 	if strings.EqualFold(provider, "tushare") {
 		tushare.SetToken(active.Token)
 	}
+}
+
+type autoSyncConfigUpdateRequest struct {
+	Enabled         *bool  `json:"enabled"`
+	Timezone        string `json:"timezone"`
+	DailyRunTime    string `json:"daily_run_time"`
+	LookbackDays    int    `json:"lookback_days"`
+	RetryLimit      int    `json:"retry_limit"`
+	RetryBackoffSec int    `json:"retry_backoff_sec"`
+}
+
+func autoSyncConfigHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	setCORSHeaders(w)
+	if handlePreflight(w, r) {
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		cfg, err := db.GetAutoSyncConfig()
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{"code": 500, "msg": err.Error()})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"code":    200,
+			"data":    cfg,
+			"running": autoSyncManager.IsRunning(),
+		})
+	case http.MethodPut:
+		cfg, err := db.GetAutoSyncConfig()
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{"code": 500, "msg": err.Error()})
+			return
+		}
+
+		var req autoSyncConfigUpdateRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{"code": 400, "msg": "请求体格式错误"})
+			return
+		}
+
+		if req.Enabled != nil {
+			cfg.Enabled = *req.Enabled
+		}
+		if strings.TrimSpace(req.Timezone) != "" {
+			cfg.Timezone = strings.TrimSpace(req.Timezone)
+		}
+		if strings.TrimSpace(req.DailyRunTime) != "" {
+			cfg.DailyRunTime = strings.TrimSpace(req.DailyRunTime)
+		}
+		if req.LookbackDays > 0 {
+			cfg.LookbackDays = req.LookbackDays
+		}
+		if req.RetryLimit > 0 {
+			cfg.RetryLimit = req.RetryLimit
+		}
+		if req.RetryBackoffSec > 0 {
+			cfg.RetryBackoffSec = req.RetryBackoffSec
+		}
+
+		if err := db.SaveAutoSyncConfig(cfg); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{"code": 400, "msg": err.Error()})
+			return
+		}
+		latest, _ := db.GetAutoSyncConfig()
+		json.NewEncoder(w).Encode(map[string]interface{}{"code": 200, "msg": "自动任务配置已更新", "data": latest})
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(map[string]interface{}{"code": 405, "msg": "不支持的请求方法"})
+	}
+}
+
+func autoSyncRunsHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	setCORSHeaders(w)
+	if handlePreflight(w, r) {
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(map[string]interface{}{"code": 405, "msg": "不支持的请求方法"})
+		return
+	}
+
+	limit := 20
+	if s := strings.TrimSpace(r.URL.Query().Get("limit")); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 && n <= 200 {
+			limit = n
+		}
+	}
+
+	runs, err := db.ListAutoSyncRuns(limit)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{"code": 500, "msg": err.Error()})
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"code":    200,
+		"data":    runs,
+		"running": autoSyncManager.IsRunning(),
+	})
+}
+
+func autoSyncRunNowHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	setCORSHeaders(w)
+	if handlePreflight(w, r) {
+		return
+	}
+
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(map[string]interface{}{"code": 405, "msg": "不支持的请求方法"})
+		return
+	}
+
+	if err := autoSyncManager.TriggerNow(); err != nil {
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]interface{}{"code": 409, "msg": err.Error()})
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{"code": 200, "msg": "自动任务已触发"})
 }
 
 // 💥 动态调整射速接口 (变速箱)
@@ -659,6 +794,7 @@ func main() {
 
 	db.InitDB()
 	syncActiveProviderToken("tushare")
+	autoSyncManager.Start()
 	startDynamicLighthouse()
 	feeder.InitGlobalEngine(800 * time.Millisecond)
 	http.HandleFunc("/api/diagnose", api.DiagnoseHandler)
@@ -672,6 +808,9 @@ func main() {
 	http.HandleFunc("/api/set_token", updateTokenHandler)
 	http.HandleFunc("/api/tokens", tokenCollectionHandler)
 	http.HandleFunc("/api/tokens/activate", tokenActivateHandler)
+	http.HandleFunc("/api/auto_sync/config", autoSyncConfigHandler)
+	http.HandleFunc("/api/auto_sync/runs", autoSyncRunsHandler)
+	http.HandleFunc("/api/auto_sync/run_now", autoSyncRunNowHandler)
 	http.HandleFunc("/api/start_sync_moneyflow", triggerSyncMoneyFlowHandler)
 	http.HandleFunc("/api/start_sync_fina", triggerSyncFinaHandler)
 	http.HandleFunc("/api/start_sync_limit", triggerSyncLimitListHandler)
