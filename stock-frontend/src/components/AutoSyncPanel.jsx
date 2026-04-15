@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import api from '../api/client'
 
 function AutoSyncPanel() {
@@ -13,16 +13,42 @@ function AutoSyncPanel() {
     retry_limit: 6,
     retry_backoff_sec: 30,
   })
+
+  const [emailCfg, setEmailCfg] = useState({
+    enabled: false,
+    auto_send_daily: false,
+    smtp_host: '',
+    smtp_port: 587,
+    smtp_user: '',
+    smtp_pass: '',
+    smtp_from: '',
+    subject_prefix: '[Stock-AutoSync]'
+  })
+
+  const [recipients, setRecipients] = useState([])
+  const [recipientForm, setRecipientForm] = useState({ email: '', label: '' })
+  const [selectedRecipients, setSelectedRecipients] = useState({})
+
   const [runs, setRuns] = useState([])
   const [selectedRunId, setSelectedRunId] = useState(0)
   const [runSteps, setRunSteps] = useState([])
 
-  const loadData = async () => {
+  const hydrateRecipientSelection = (items) => {
+    const next = {}
+    ;(items || []).forEach((r) => {
+      if (r.enabled) next[r.id] = true
+    })
+    setSelectedRecipients(next)
+  }
+
+  const loadData = useCallback(async () => {
     setLoading(true)
     try {
-      const [cfgRes, runsRes] = await Promise.all([
+      const [cfgRes, runsRes, emailCfgRes, recipientsRes] = await Promise.all([
         api.getAutoSyncConfig(),
         api.listAutoSyncRuns(20),
+        api.getEmailNotifyConfig(),
+        api.listEmailRecipients(),
       ])
 
       if (cfgRes.code === 200 && cfgRes.data) {
@@ -41,16 +67,35 @@ function AutoSyncPanel() {
         setRuns(runsRes.data || [])
         setRunning(!!runsRes.running)
       }
+
+      if (emailCfgRes.code === 200 && emailCfgRes.data) {
+        setEmailCfg({
+          enabled: !!emailCfgRes.data.enabled,
+          auto_send_daily: !!emailCfgRes.data.auto_send_daily,
+          smtp_host: emailCfgRes.data.smtp_host || '',
+          smtp_port: emailCfgRes.data.smtp_port || 587,
+          smtp_user: emailCfgRes.data.smtp_user || '',
+          smtp_pass: emailCfgRes.data.smtp_pass || '',
+          smtp_from: emailCfgRes.data.smtp_from || '',
+          subject_prefix: emailCfgRes.data.subject_prefix || '[Stock-AutoSync]'
+        })
+      }
+
+      if (recipientsRes.code === 200) {
+        const list = recipientsRes.data || []
+        setRecipients(list)
+        hydrateRecipientSelection(list)
+      }
     } catch {
       setMsg('自动任务配置读取失败')
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
   useEffect(() => {
     loadData()
-  }, [])
+  }, [loadData])
 
   const loadRunSteps = async (runId) => {
     if (!runId) return
@@ -94,6 +139,97 @@ function AutoSyncPanel() {
     }
   }
 
+  const handleSaveEmailConfig = async () => {
+    setLoading(true)
+    try {
+      const res = await api.updateEmailNotifyConfig({
+        enabled: !!emailCfg.enabled,
+        auto_send_daily: !!emailCfg.auto_send_daily,
+        smtp_host: emailCfg.smtp_host.trim(),
+        smtp_port: Number(emailCfg.smtp_port) || 587,
+        smtp_user: emailCfg.smtp_user.trim(),
+        smtp_pass: emailCfg.smtp_pass,
+        smtp_from: emailCfg.smtp_from.trim(),
+        subject_prefix: emailCfg.subject_prefix.trim() || '[Stock-AutoSync]'
+      })
+      if (res.code === 200) {
+        setMsg('邮件配置已保存')
+        await loadData()
+      } else {
+        setMsg(`邮件配置保存失败: ${res.msg || ''}`)
+      }
+    } catch {
+      setMsg('邮件配置保存失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleAddRecipient = async () => {
+    if (!recipientForm.email.trim()) {
+      setMsg('请先输入收件邮箱')
+      return
+    }
+    setLoading(true)
+    try {
+      const res = await api.createEmailRecipient({
+        email: recipientForm.email.trim(),
+        label: recipientForm.label.trim(),
+        enabled: true,
+      })
+      if (res.code === 200) {
+        setRecipientForm({ email: '', label: '' })
+        setMsg('收件人已添加')
+        await loadData()
+      } else {
+        setMsg(`添加收件人失败: ${res.msg || ''}`)
+      }
+    } catch {
+      setMsg('添加收件人失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleToggleRecipient = async (item) => {
+    setLoading(true)
+    try {
+      const res = await api.updateEmailRecipient({
+        id: item.id,
+        label: item.label || '',
+        enabled: !item.enabled,
+      })
+      if (res.code === 200) {
+        setMsg(item.enabled ? '收件人已禁用' : '收件人已启用')
+        await loadData()
+      } else {
+        setMsg(`更新收件人失败: ${res.msg || ''}`)
+      }
+    } catch {
+      setMsg('更新收件人失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleDeleteRecipient = async (id) => {
+    if (!window.confirm('确定删除该收件人吗？')) return
+    setLoading(true)
+    try {
+      const res = await api.deleteEmailRecipient(id)
+      if (res.code === 200) {
+        setMsg('收件人已删除')
+        await loadData()
+      } else {
+        setMsg(`删除收件人失败: ${res.msg || ''}`)
+      }
+    } catch {
+      setMsg('删除收件人失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const handleRunNow = async () => {
     setLoading(true)
     try {
@@ -106,6 +242,29 @@ function AutoSyncPanel() {
       }
     } catch {
       setMsg('触发自动任务失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleSendRunEmail = async (runId) => {
+    setLoading(true)
+    try {
+      const recipientIds = Object.entries(selectedRecipients)
+        .filter(([, checked]) => !!checked)
+        .map(([id]) => Number(id))
+
+      const res = await api.sendRunReportEmail({
+        run_id: runId,
+        recipient_ids: recipientIds,
+      })
+      if (res.code === 200) {
+        setMsg('运行结果邮件已发送')
+      } else {
+        setMsg(`邮件发送失败: ${res.msg || ''}`)
+      }
+    } catch {
+      setMsg('邮件发送失败')
     } finally {
       setLoading(false)
     }
@@ -208,7 +367,7 @@ function AutoSyncPanel() {
 
       <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginBottom: '10px' }}>
         <button onClick={handleSave} disabled={loading} style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', background: '#26a69a', color: '#fff', fontWeight: 'bold', cursor: 'pointer' }}>
-          保存配置
+          保存任务配置
         </button>
         <button onClick={handleRunNow} disabled={loading || running} style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', background: running ? '#546e7a' : '#5c6bc0', color: '#fff', fontWeight: 'bold', cursor: 'pointer' }}>
           {running ? '任务运行中' : '立即执行一次'}
@@ -216,6 +375,104 @@ function AutoSyncPanel() {
         <button onClick={loadData} disabled={loading} style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', background: '#607d8b', color: '#fff', cursor: 'pointer' }}>
           刷新状态
         </button>
+      </div>
+
+      <div style={{ marginTop: '18px', marginBottom: '18px', border: '1px solid #324150', borderRadius: '8px', padding: '12px', background: '#10202d' }}>
+        <h3 style={{ margin: '0 0 10px 0', color: '#9ad0ff' }}>📧 邮件推送配置</h3>
+        <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto 1fr auto 1fr', gap: '10px', alignItems: 'center' }}>
+          <label style={{ color: '#cfd8dc' }}>启用邮件</label>
+          <input type="checkbox" checked={emailCfg.enabled} onChange={(e) => setEmailCfg({ ...emailCfg, enabled: e.target.checked })} />
+
+          <label style={{ color: '#cfd8dc' }}>自动日推送</label>
+          <input type="checkbox" checked={emailCfg.auto_send_daily} onChange={(e) => setEmailCfg({ ...emailCfg, auto_send_daily: e.target.checked })} />
+
+          <label style={{ color: '#cfd8dc' }}>SMTP Host</label>
+          <input value={emailCfg.smtp_host} onChange={(e) => setEmailCfg({ ...emailCfg, smtp_host: e.target.value })} style={{ padding: '7px', borderRadius: '6px', border: '1px solid #555', background: '#0f1720', color: '#fff' }} />
+
+          <label style={{ color: '#cfd8dc' }}>SMTP Port</label>
+          <input type="number" value={emailCfg.smtp_port} onChange={(e) => setEmailCfg({ ...emailCfg, smtp_port: Number(e.target.value) || 587 })} style={{ padding: '7px', borderRadius: '6px', border: '1px solid #555', background: '#0f1720', color: '#fff' }} />
+
+          <label style={{ color: '#cfd8dc' }}>SMTP User</label>
+          <input value={emailCfg.smtp_user} onChange={(e) => setEmailCfg({ ...emailCfg, smtp_user: e.target.value })} style={{ padding: '7px', borderRadius: '6px', border: '1px solid #555', background: '#0f1720', color: '#fff' }} />
+
+          <label style={{ color: '#cfd8dc' }}>SMTP Pass</label>
+          <input type="password" value={emailCfg.smtp_pass} onChange={(e) => setEmailCfg({ ...emailCfg, smtp_pass: e.target.value })} style={{ padding: '7px', borderRadius: '6px', border: '1px solid #555', background: '#0f1720', color: '#fff' }} />
+
+          <label style={{ color: '#cfd8dc' }}>发件人</label>
+          <input value={emailCfg.smtp_from} onChange={(e) => setEmailCfg({ ...emailCfg, smtp_from: e.target.value })} style={{ padding: '7px', borderRadius: '6px', border: '1px solid #555', background: '#0f1720', color: '#fff' }} />
+
+          <label style={{ color: '#cfd8dc' }}>主题前缀</label>
+          <input value={emailCfg.subject_prefix} onChange={(e) => setEmailCfg({ ...emailCfg, subject_prefix: e.target.value })} style={{ padding: '7px', borderRadius: '6px', border: '1px solid #555', background: '#0f1720', color: '#fff' }} />
+        </div>
+        <div style={{ marginTop: '10px' }}>
+          <button onClick={handleSaveEmailConfig} disabled={loading} style={{ padding: '8px 14px', borderRadius: '6px', border: 'none', background: '#2e7d32', color: '#fff', fontWeight: 'bold', cursor: 'pointer' }}>
+            保存邮件配置
+          </button>
+        </div>
+      </div>
+
+      <div style={{ marginTop: '18px', marginBottom: '18px', border: '1px solid #324150', borderRadius: '8px', padding: '12px', background: '#10202d' }}>
+        <h3 style={{ margin: '0 0 10px 0', color: '#9ad0ff' }}>👥 收件人管理</h3>
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '10px' }}>
+          <input
+            value={recipientForm.email}
+            onChange={(e) => setRecipientForm({ ...recipientForm, email: e.target.value })}
+            placeholder="收件邮箱"
+            style={{ padding: '7px', borderRadius: '6px', border: '1px solid #555', background: '#0f1720', color: '#fff', minWidth: '260px' }}
+          />
+          <input
+            value={recipientForm.label}
+            onChange={(e) => setRecipientForm({ ...recipientForm, label: e.target.value })}
+            placeholder="标签(可选)"
+            style={{ padding: '7px', borderRadius: '6px', border: '1px solid #555', background: '#0f1720', color: '#fff', minWidth: '160px' }}
+          />
+          <button onClick={handleAddRecipient} disabled={loading} style={{ padding: '7px 12px', borderRadius: '6px', border: 'none', background: '#00897b', color: '#fff', cursor: 'pointer' }}>
+            添加收件人
+          </button>
+        </div>
+
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', color: '#e8eef5', fontSize: '0.9rem' }}>
+            <thead>
+              <tr style={{ background: '#24313d' }}>
+                <th style={{ padding: '6px', border: '1px solid #324150' }}>选择</th>
+                <th style={{ padding: '6px', border: '1px solid #324150' }}>邮箱</th>
+                <th style={{ padding: '6px', border: '1px solid #324150' }}>标签</th>
+                <th style={{ padding: '6px', border: '1px solid #324150' }}>状态</th>
+                <th style={{ padding: '6px', border: '1px solid #324150' }}>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {recipients.length === 0 && (
+                <tr>
+                  <td colSpan="5" style={{ padding: '8px', border: '1px solid #324150', color: '#90a4ae' }}>暂无收件人</td>
+                </tr>
+              )}
+              {recipients.map((r) => (
+                <tr key={r.id}>
+                  <td style={{ padding: '6px', border: '1px solid #324150' }}>
+                    <input
+                      type="checkbox"
+                      checked={!!selectedRecipients[r.id]}
+                      onChange={(e) => setSelectedRecipients({ ...selectedRecipients, [r.id]: e.target.checked })}
+                    />
+                  </td>
+                  <td style={{ padding: '6px', border: '1px solid #324150' }}>{r.email}</td>
+                  <td style={{ padding: '6px', border: '1px solid #324150' }}>{r.label || '-'}</td>
+                  <td style={{ padding: '6px', border: '1px solid #324150', color: r.enabled ? '#4caf50' : '#ef5350' }}>{r.enabled ? '启用' : '禁用'}</td>
+                  <td style={{ padding: '6px', border: '1px solid #324150' }}>
+                    <button onClick={() => handleToggleRecipient(r)} disabled={loading} style={{ marginRight: '6px', padding: '4px 8px', borderRadius: '4px', border: 'none', background: '#5c6bc0', color: '#fff', cursor: 'pointer' }}>
+                      {r.enabled ? '禁用' : '启用'}
+                    </button>
+                    <button onClick={() => handleDeleteRecipient(r.id)} disabled={loading} style={{ padding: '4px 8px', borderRadius: '4px', border: 'none', background: '#c62828', color: '#fff', cursor: 'pointer' }}>
+                      删除
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {msg && <p style={{ color: '#ffd54f', marginTop: 0 }}>{msg}</p>}
@@ -233,12 +490,13 @@ function AutoSyncPanel() {
               <th style={{ padding: '8px', border: '1px solid #324150' }}>网络失败次数</th>
               <th style={{ padding: '8px', border: '1px solid #324150' }}>错误信息</th>
               <th style={{ padding: '8px', border: '1px solid #324150' }}>步骤</th>
+              <th style={{ padding: '8px', border: '1px solid #324150' }}>邮件</th>
             </tr>
           </thead>
           <tbody>
             {runs.length === 0 && (
               <tr>
-                <td colSpan="9" style={{ padding: '12px', border: '1px solid #324150', color: '#93a5b8' }}>
+                <td colSpan="10" style={{ padding: '12px', border: '1px solid #324150', color: '#93a5b8' }}>
                   暂无运行记录
                 </td>
               </tr>
@@ -252,7 +510,7 @@ function AutoSyncPanel() {
                 <td style={{ padding: '8px', border: '1px solid #324150' }}>{renderDualTime(r.started_at)}</td>
                 <td style={{ padding: '8px', border: '1px solid #324150' }}>{renderDualTime(r.finished_at)}</td>
                 <td style={{ padding: '8px', border: '1px solid #324150' }}>{r.network_failures || 0}</td>
-                <td style={{ padding: '8px', border: '1px solid #324150', maxWidth: '260px', wordBreak: 'break-word' }}>{r.error_msg || '-'}</td>
+                <td style={{ padding: '8px', border: '1px solid #324150', maxWidth: '220px', wordBreak: 'break-word' }}>{r.error_msg || '-'}</td>
                 <td style={{ padding: '8px', border: '1px solid #324150' }}>
                   <button
                     onClick={() => loadRunSteps(r.id)}
@@ -260,6 +518,15 @@ function AutoSyncPanel() {
                     style={{ padding: '4px 8px', borderRadius: '4px', border: 'none', background: '#4db6ac', color: '#fff', cursor: 'pointer' }}
                   >
                     查看步骤
+                  </button>
+                </td>
+                <td style={{ padding: '8px', border: '1px solid #324150' }}>
+                  <button
+                    onClick={() => handleSendRunEmail(r.id)}
+                    disabled={loading}
+                    style={{ padding: '4px 8px', borderRadius: '4px', border: 'none', background: '#f57c00', color: '#fff', cursor: 'pointer' }}
+                  >
+                    发送结果
                   </button>
                 </td>
               </tr>

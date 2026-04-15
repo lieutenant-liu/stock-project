@@ -13,6 +13,7 @@ import (
 	"stock-backend/autosync"
 	"stock-backend/db"
 	"stock-backend/feeder"
+	"stock-backend/mailnotify"
 	"stock-backend/tushare"
 	"strconv"
 	"strings"
@@ -503,6 +504,208 @@ func autoSyncRunStepsHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"code": 200, "data": steps})
 }
 
+type emailNotifyConfigUpdateRequest struct {
+	Enabled       *bool  `json:"enabled"`
+	AutoSendDaily *bool  `json:"auto_send_daily"`
+	SMTPHost      string `json:"smtp_host"`
+	SMTPPort      int    `json:"smtp_port"`
+	SMTPUser      string `json:"smtp_user"`
+	SMTPPass      string `json:"smtp_pass"`
+	SMTPFrom      string `json:"smtp_from"`
+	SubjectPrefix string `json:"subject_prefix"`
+}
+
+type emailRecipientCreateRequest struct {
+	Email   string `json:"email"`
+	Label   string `json:"label"`
+	Enabled *bool  `json:"enabled"`
+}
+
+type emailRecipientUpdateRequest struct {
+	ID      int64  `json:"id"`
+	Label   string `json:"label"`
+	Enabled bool   `json:"enabled"`
+}
+
+type emailSendRunRequest struct {
+	RunID        int64   `json:"run_id"`
+	RecipientIDs []int64 `json:"recipient_ids"`
+}
+
+func emailNotifyConfigHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	setCORSHeaders(w)
+	if handlePreflight(w, r) {
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		cfg, err := db.GetEmailNotifyConfig()
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{"code": 500, "msg": err.Error()})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"code": 200, "data": cfg})
+	case http.MethodPut:
+		cur, err := db.GetEmailNotifyConfig()
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{"code": 500, "msg": err.Error()})
+			return
+		}
+
+		var req emailNotifyConfigUpdateRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{"code": 400, "msg": "请求体格式错误"})
+			return
+		}
+
+		if req.Enabled != nil {
+			cur.Enabled = *req.Enabled
+		}
+		if req.AutoSendDaily != nil {
+			cur.AutoSendDaily = *req.AutoSendDaily
+		}
+		if strings.TrimSpace(req.SMTPHost) != "" {
+			cur.SMTPHost = strings.TrimSpace(req.SMTPHost)
+		}
+		if req.SMTPPort > 0 {
+			cur.SMTPPort = req.SMTPPort
+		}
+		if strings.TrimSpace(req.SMTPUser) != "" {
+			cur.SMTPUser = strings.TrimSpace(req.SMTPUser)
+		}
+		if strings.TrimSpace(req.SMTPPass) != "" {
+			cur.SMTPPass = req.SMTPPass
+		}
+		if strings.TrimSpace(req.SMTPFrom) != "" {
+			cur.SMTPFrom = strings.TrimSpace(req.SMTPFrom)
+		}
+		if strings.TrimSpace(req.SubjectPrefix) != "" {
+			cur.SubjectPrefix = strings.TrimSpace(req.SubjectPrefix)
+		}
+
+		if err := db.SaveEmailNotifyConfig(cur); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{"code": 400, "msg": err.Error()})
+			return
+		}
+		latest, _ := db.GetEmailNotifyConfig()
+		json.NewEncoder(w).Encode(map[string]interface{}{"code": 200, "msg": "邮件配置已保存", "data": latest})
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(map[string]interface{}{"code": 405, "msg": "不支持的请求方法"})
+	}
+}
+
+func emailRecipientsHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	setCORSHeaders(w)
+	if handlePreflight(w, r) {
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		items, err := db.ListEmailRecipients()
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{"code": 500, "msg": err.Error()})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"code": 200, "data": items})
+	case http.MethodPost:
+		var req emailRecipientCreateRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{"code": 400, "msg": "请求体格式错误"})
+			return
+		}
+		enabled := true
+		if req.Enabled != nil {
+			enabled = *req.Enabled
+		}
+		id, err := db.AddEmailRecipient(req.Email, req.Label, enabled)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{"code": 400, "msg": err.Error()})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"code": 200, "msg": "收件人已添加", "id": id})
+	case http.MethodPut:
+		var req emailRecipientUpdateRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{"code": 400, "msg": "请求体格式错误"})
+			return
+		}
+		if req.ID <= 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{"code": 400, "msg": "id 不能为空"})
+			return
+		}
+		if err := db.UpdateEmailRecipient(req.ID, req.Label, req.Enabled); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{"code": 400, "msg": err.Error()})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"code": 200, "msg": "收件人已更新"})
+	case http.MethodDelete:
+		idStr := strings.TrimSpace(r.URL.Query().Get("id"))
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{"code": 400, "msg": "id 参数非法"})
+			return
+		}
+		if err := db.DeleteEmailRecipient(id); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{"code": 400, "msg": err.Error()})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"code": 200, "msg": "收件人已删除"})
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(map[string]interface{}{"code": 405, "msg": "不支持的请求方法"})
+	}
+}
+
+func emailSendRunHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	setCORSHeaders(w)
+	if handlePreflight(w, r) {
+		return
+	}
+
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(map[string]interface{}{"code": 405, "msg": "不支持的请求方法"})
+		return
+	}
+
+	var req emailSendRunRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{"code": 400, "msg": "请求体格式错误"})
+		return
+	}
+	if req.RunID <= 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{"code": 400, "msg": "run_id 不能为空"})
+		return
+	}
+
+	if err := mailnotify.SendRunReport(req.RunID, req.RecipientIDs); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{"code": 400, "msg": err.Error()})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"code": 200, "msg": "邮件发送成功"})
+}
+
 // 💥 动态调整射速接口 (变速箱)
 func updateSpeedHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
@@ -848,6 +1051,9 @@ func main() {
 	http.HandleFunc("/api/auto_sync/runs", autoSyncRunsHandler)
 	http.HandleFunc("/api/auto_sync/run_now", autoSyncRunNowHandler)
 	http.HandleFunc("/api/auto_sync/run_steps", autoSyncRunStepsHandler)
+	http.HandleFunc("/api/notify/email/config", emailNotifyConfigHandler)
+	http.HandleFunc("/api/notify/email/recipients", emailRecipientsHandler)
+	http.HandleFunc("/api/notify/email/send_run", emailSendRunHandler)
 	http.HandleFunc("/api/start_sync_moneyflow", triggerSyncMoneyFlowHandler)
 	http.HandleFunc("/api/start_sync_fina", triggerSyncFinaHandler)
 	http.HandleFunc("/api/start_sync_limit", triggerSyncLimitListHandler)

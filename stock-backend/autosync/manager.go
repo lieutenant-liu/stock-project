@@ -7,6 +7,7 @@ import (
 	"net"
 	"stock-backend/db"
 	"stock-backend/feeder"
+	"stock-backend/mailnotify"
 	"stock-backend/tushare"
 	"strings"
 	"sync"
@@ -298,6 +299,9 @@ func (m *Manager) run(triggerType, runDate string, cfg db.AutoSyncConfig, loc *t
 
 	if err := db.FinishAutoSyncRun(runID, status, networkFailures, errorMsg, summaryJSON); err != nil {
 		feeder.LogMsg("❌ [自动任务] 写入运行结果失败: %v", err)
+	}
+	if mailErr := mailnotify.AutoSendRunReport(runID); mailErr != nil {
+		feeder.LogMsg("⚠️ [自动任务] 自动邮件推送失败: %v", mailErr)
 	}
 	if status == "success" {
 		_ = db.SetAutoSyncLastRunDate(runDate)

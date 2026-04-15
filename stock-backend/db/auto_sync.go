@@ -262,6 +262,27 @@ func GetLatestAutoSyncRun() (*AutoSyncRun, error) {
 	return &r, nil
 }
 
+func GetAutoSyncRunByID(runID int64) (*AutoSyncRun, error) {
+	if runID <= 0 {
+		return nil, errors.New("run_id 非法")
+	}
+	row := DB.QueryRow(`
+		SELECT id, run_date, trigger_type, status, started_at, finished_at, network_failures, error_msg, summary_json, created_at, updated_at
+		FROM auto_sync_runs
+		WHERE id = ?
+		LIMIT 1
+	`, runID)
+	var r AutoSyncRun
+	err := row.Scan(&r.ID, &r.RunDate, &r.TriggerType, &r.Status, &r.StartedAt, &r.FinishedAt, &r.NetworkFailures, &r.ErrorMsg, &r.SummaryJSON, &r.CreatedAt, &r.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &r, nil
+}
+
 func StartAutoSyncRunStep(runID int64, stepName string, attempt int) (int64, error) {
 	if runID <= 0 {
 		return 0, errors.New("run_id 非法")

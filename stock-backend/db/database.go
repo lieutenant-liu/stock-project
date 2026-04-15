@@ -249,6 +249,33 @@ func InitDB() {
 	CREATE INDEX IF NOT EXISTS idx_auto_sync_run_steps_run_id ON auto_sync_run_steps(run_id);
 	CREATE INDEX IF NOT EXISTS idx_auto_sync_run_steps_status ON auto_sync_run_steps(status);`
 
+	// 15. 邮件推送配置
+	createEmailNotifyConfigTable := `
+	CREATE TABLE IF NOT EXISTS email_notify_config (
+		id INTEGER PRIMARY KEY CHECK (id = 1),
+		enabled INTEGER NOT NULL DEFAULT 0,
+		auto_send_daily INTEGER NOT NULL DEFAULT 0,
+		smtp_host TEXT NOT NULL DEFAULT '',
+		smtp_port INTEGER NOT NULL DEFAULT 587,
+		smtp_user TEXT NOT NULL DEFAULT '',
+		smtp_pass TEXT NOT NULL DEFAULT '',
+		smtp_from TEXT NOT NULL DEFAULT '',
+		subject_prefix TEXT NOT NULL DEFAULT '[Stock-AutoSync]',
+		updated_at TEXT NOT NULL
+	);`
+
+	// 16. 收件人列表
+	createEmailRecipientsTable := `
+	CREATE TABLE IF NOT EXISTS email_recipients (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		email TEXT NOT NULL UNIQUE,
+		label TEXT NOT NULL DEFAULT '',
+		enabled INTEGER NOT NULL DEFAULT 1,
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL
+	);
+	CREATE INDEX IF NOT EXISTS idx_email_recipients_enabled ON email_recipients(enabled);`
+
 	// 💥 黎明扫荡：物理销毁旧时代的打卡本！
 	DB.Exec(`DROP TABLE IF EXISTS sync_history;`)
 	DB.Exec(`DROP TABLE IF EXISTS sync_history_fund;`)
@@ -261,6 +288,7 @@ func InitDB() {
 		createMoneyFlowTable, createStkLimitTable, createIndexTable, createPositionTable,
 		createAPITokenTable, createAutoSyncConfigTable, createAutoSyncRunsTable,
 		createAutoSyncRunStepsTable,
+		createEmailNotifyConfigTable, createEmailRecipientsTable,
 	}
 	for _, sqlStr := range tables {
 		if _, err = DB.Exec(sqlStr); err != nil {
