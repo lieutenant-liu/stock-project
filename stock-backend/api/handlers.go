@@ -18,7 +18,42 @@ type APIResponse struct {
 	Data interface{} `json:"data"`
 }
 
-// DiagnoseHandler 策略扫描雷达的核心 API (V3.0 多态调度架构)
+func normalizeTSCode(rawCode string) string {
+	cleanCode := strings.TrimSpace(rawCode)
+	if cleanCode == "" {
+		return ""
+	}
+	if strings.Contains(cleanCode, ".") {
+		return cleanCode
+	}
+	if strings.HasPrefix(cleanCode, "6") {
+		return cleanCode + ".SH"
+	}
+	if strings.HasPrefix(cleanCode, "0") || strings.HasPrefix(cleanCode, "3") {
+		return cleanCode + ".SZ"
+	}
+	if strings.HasPrefix(cleanCode, "4") || strings.HasPrefix(cleanCode, "8") {
+		return cleanCode + ".BJ"
+	}
+	return cleanCode
+}
+
+func resolveStockName(tsCode, rawName string) string {
+	name := strings.TrimSpace(rawName)
+	if name != "" && name != "未知" {
+		return name
+	}
+
+	var dbName string
+	err := db.DB.QueryRow(`SELECT COALESCE(name, '') FROM stock_basic WHERE ts_code = ?`, tsCode).Scan(&dbName)
+	if err == nil && strings.TrimSpace(dbName) != "" {
+		return strings.TrimSpace(dbName)
+	}
+
+	return "未知"
+}
+
+// DiagnoseHandler 策略扫描核心 API (V3.0 多态调度架构)
 func DiagnoseHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -41,7 +76,7 @@ func DiagnoseHandler(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(rawCodes) == "" {
 		codeList = db.GetAllStockCodes()
 		isAllMarket = true
-		fmt.Printf("🎯 [雷达中枢] 收到全市场扫描指令！目标池: %d 只股票...\n", len(codeList))
+		fmt.Printf("🎯 [扫描中心] 收到全市场扫描指令，目标池: %d 只股票\n", len(codeList))
 	} else {
 		parts := strings.Split(rawCodes, ",")
 		for _, p := range parts {
@@ -64,14 +99,14 @@ func DiagnoseHandler(w http.ResponseWriter, r *http.Request) {
 
 	var results []map[string]interface{}
 
-	// 💥 架构核心：唤醒所有军师（策略分析器）
+	// 核心调度：唤醒已启用的策略分析器
 	activeAnalyzers := strategy.GetActiveAnalyzers()
 	// =========================================================
 	// 🛡️ [机构级风控：大盘 Beta 与 情绪冰点 全局熔断前置拦截]
 	// =========================================================
 	shIndexData := db.GetIndexDailyFromDB("000001.SH", startDate, endDate)
 
-	// 💥 提取昨日和今日的交易日期，计算打板溢价率
+	// 提取昨日和今日交易日期，计算涨停溢价率
 	limitUpCount := 0
 	avgPremium := 0.0
 	if len(shIndexData) >= 2 {
@@ -80,16 +115,16 @@ func DiagnoseHandler(w http.ResponseWriter, r *http.Request) {
 		limitUpCount, avgPremium = db.GetLimitUpPremium(yesterdayDate, todayDate)
 	}
 
-	// 把溢价率数据喂给风控中心
+	// 将溢价率数据送入风控模块
 	isMarketSafe, marketMsg := strategy.CheckMarketEnvironment(shIndexData, limitUpCount, avgPremium)
 
 	fmt.Printf("🌐 [全局风控] %s\n", marketMsg)
 
-	// 如果大盘处于暴跌或情绪退潮，且用户正在执行“全市场扫描”，则直接拔网线！
+	// 如果大盘处于风险区间，且用户正在执行“全市场扫描”，则直接拦截买入信号输出
 	if !isMarketSafe && isAllMarket {
 		json.NewEncoder(w).Encode(APIResponse{
 			Code: 200,
-			Msg:  marketMsg + " (系统已自动拦截今日所有买入操作，耐心等待情绪反转！)",
+			Msg:  marketMsg + "（系统已自动拦截今日全市场买入信号，建议等待环境改善）",
 			Data: []map[string]interface{}{},
 		})
 		return
@@ -99,7 +134,7 @@ func DiagnoseHandler(w http.ResponseWriter, r *http.Request) {
 		// 1. 过滤垃圾股，同时提取【所属行业】
 		var stockName, industry string
 
-		// 💥 终极修复：使用 SQL 的 COALESCE 自动处理 NULL 值，Go 端只接收纯净的 string！
+		// 使用 SQL 的 COALESCE 自动处理 NULL 值，Go 端只接收 string
 		err := db.DB.QueryRow(`SELECT COALESCE(name, '未知'), COALESCE(industry, '未知板块') FROM stock_basic WHERE ts_code = ?`, code).Scan(&stockName, &industry)
 		if err != nil {
 			stockName = "未知"
@@ -110,14 +145,14 @@ func DiagnoseHandler(w http.ResponseWriter, r *http.Request) {
 			continue // 坚决不碰 ST
 		}
 
-		// 2. 提取底层公共弹药：K线量价数据
+		// 2. 提取底层数据：K 线量价数据
 		historyData := db.GetKLinesFromDB(code, startDate, endDate)
 		if len(historyData) == 0 {
 			continue
 		}
 
 		// =========================================================
-		// 💥 [数据治理]：强制前复权清洗，抹平 K 线断层！
+		// 数据治理：执行前复权清洗，减少 K 线断层影响
 		// =========================================================
 		adjFactors := db.GetAdjFactorsFromDB(code, startDate, endDate)
 		if len(adjFactors) > 0 {
@@ -150,7 +185,7 @@ func DiagnoseHandler(w http.ResponseWriter, r *http.Request) {
 
 		pePercentile := db.GetPEPercentile(code, endDate, 750)
 
-		// 💥 直接使用纯净的 stockName，再也不会有 Object 报错！
+		// 直接使用纯净的 stockName
 		ctx := &strategy.SecurityContext{
 			Code:         code,
 			StockName:    stockName,
@@ -160,7 +195,7 @@ func DiagnoseHandler(w http.ResponseWriter, r *http.Request) {
 			PEPercentile: pePercentile,
 		}
 
-		// 4. 兵分多路，多态策略并发/循环裁决
+		// 4. 多策略并发/循环分析
 		for _, analyzer := range activeAnalyzers {
 			result := analyzer.Analyze(ctx)
 
@@ -170,7 +205,7 @@ func DiagnoseHandler(w http.ResponseWriter, r *http.Request) {
 					chartData = historyData[len(historyData)-90:]
 				}
 
-				// 💥 直接放入纯净的 stockName 和 industry！
+				// 直接放入纯净的 stockName 和 industry
 				frontItem := map[string]interface{}{
 					"code":            result.Code,
 					"name":            stockName,
@@ -197,46 +232,46 @@ func DiagnoseHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// =========================================================
-	// 💥 [全局扫描] 行业共振雷达与阶梯打标引擎
+	// [全局扫描] 行业共振统计与分层标签
 	// =========================================================
 	if len(results) > 0 {
-		// 1. 统计今天各个行业触发买点的股票总数
+		// 1. 统计今日各行业触发买点的股票总数
 		industryCount := make(map[string]int)
 		for _, item := range results {
 			ind := item["industry"].(string)
 			industryCount[ind]++
 		}
 
-		// 2. 二次遍历，打上不同权重的战术标签
+		// 2. 二次遍历，打上不同权重的标签
 		for i := range results {
 			ind := results[i]["industry"].(string)
 			count := industryCount[ind]
 
 			var tagName string
-			// 按照资金攻击的强度分为三个梯队
+			// 按行业聚集度分为三个梯队
 			if count >= 3 {
-				tagName = "[🌟 板块共振·主升浪]" // 极高权重：产业级逻辑爆发
+				tagName = "[🌟 板块共振·高强度]" // 极高权重：产业级逻辑爆发
 			} else if count == 2 {
-				tagName = "[🔥 行业异动·双龙戏珠]" // 中高权重：资金尝试攻击该方向
+				tagName = "[🔥 行业异动·中强度]" // 中高权重：资金关注提升
 			} else {
-				tagName = "[🐺 独立行情·孤狼]" // 低权重：个股独立逻辑 (不剔除，但提示风险)
+				tagName = "[🐺 独立行情·低强度]" // 低权重：个股独立逻辑
 			}
 
 			// 将标签强行注入策略名称，前端会直接高亮显示
 			origStrategy := results[i]["strategy_name"].(string)
 			results[i]["strategy_name"] = fmt.Sprintf("%s %s", tagName, origStrategy)
 
-			// 如果是板块共振，在战报最醒目的位置加上群聚提示
+			// 如果是板块共振，在结果说明中增加群聚提示
 			if count > 1 {
 				origMsg := results[i]["message"].(string)
-				results[i]["message"] = fmt.Sprintf("【同板块今日共有 %d 只股票同时爆发买点！】\n%s", count, origMsg)
+				results[i]["message"] = fmt.Sprintf("【同板块今日共有 %d 只股票同时触发买点】\n%s", count, origMsg)
 			}
 		}
 	}
 	// =========================================================
 
 	if isAllMarket {
-		fmt.Printf("🎉 [雷达中枢] 扫描完毕！三大策略引擎共揪出 %d 个战术买点。\n", len(results))
+		fmt.Printf("🎉 [扫描中心] 扫描完毕，策略引擎共发现 %d 个买点\n", len(results))
 	}
 
 	json.NewEncoder(w).Encode(APIResponse{
@@ -298,21 +333,8 @@ func AddPositionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// =========================================================
-	// 💥 核心修复：智能补齐股票代码后缀 (防幽灵持仓)
-	// =========================================================
-	cleanCode := strings.TrimSpace(pos.TSCode)
-	if cleanCode != "" && !strings.Contains(cleanCode, ".") {
-		if strings.HasPrefix(cleanCode, "6") {
-			cleanCode += ".SH"
-		} else if strings.HasPrefix(cleanCode, "0") || strings.HasPrefix(cleanCode, "3") {
-			cleanCode += ".SZ"
-		} else if strings.HasPrefix(cleanCode, "4") || strings.HasPrefix(cleanCode, "8") {
-			cleanCode += ".BJ"
-		}
-	}
-	pos.TSCode = cleanCode // 将补全后的标准代码覆盖回去
-	// =========================================================
+	pos.TSCode = normalizeTSCode(pos.TSCode)
+	pos.StockName = resolveStockName(pos.TSCode, pos.StockName)
 
 	// 防呆拦截
 	if pos.CostPrice <= 0 || pos.HoldVolume <= 0 {
@@ -324,7 +346,7 @@ func AddPositionHandler(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(APIResponse{Code: 500, Msg: "录入失败: " + err.Error()})
 		return
 	}
-	json.NewEncoder(w).Encode(APIResponse{Code: 200, Msg: "持仓防线已部署"})
+	json.NewEncoder(w).Encode(APIResponse{Code: 200, Msg: "持仓已添加"})
 }
 
 // DeletePositionHandler 供前端调用：手动移出持仓
@@ -347,7 +369,10 @@ func DeletePositionHandler(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(APIResponse{Code: 400, Msg: "参数解析失败"})
 		return
 	}
-	db.DeletePosition(req.ID)
+	if err := db.DeletePosition(req.ID); err != nil {
+		json.NewEncoder(w).Encode(APIResponse{Code: 500, Msg: "移除失败: " + err.Error()})
+		return
+	}
 	json.NewEncoder(w).Encode(APIResponse{Code: 200, Msg: "仓位已清除"})
 }
 
@@ -360,25 +385,49 @@ func GetPositionsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // ==========================================
-// 🔪 机械侧刀核心引擎 (MonitorHandler)
+// 持仓风险评估核心接口 (PositionRiskHandler)
 // ==========================================
-func MonitorHandler(w http.ResponseWriter, r *http.Request) {
+func PositionRiskHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	positions, err := db.GetAllPositions()
 	if err != nil || len(positions) == 0 {
-		json.NewEncoder(w).Encode(APIResponse{Code: 200, Msg: "当前空仓，侧刀静默。", Data: []map[string]interface{}{}})
+		json.NewEncoder(w).Encode(APIResponse{Code: 200, Msg: "当前无持仓，风险评估为空。", Data: []map[string]interface{}{}})
 		return
 	}
 
 	endDate := time.Now().Format("20060102")
+	latestMarketDate := db.GetLatestOpenTradeDate(endDate)
 	var reports []map[string]interface{}
+	missingCount := 0
+	staleCount := 0
 
 	for _, pos := range positions {
+		displayName := resolveStockName(pos.TSCode, pos.StockName)
+
 		// 1. 动态获取建仓日以来的所有 K 线 (这是计算水位的关键)
 		historyData := db.GetKLinesFromDB(pos.TSCode, pos.BuyDate, endDate)
 		if len(historyData) == 0 {
+			missingCount++
+			reports = append(reports, map[string]interface{}{
+				"id":                pos.ID,
+				"ts_code":           pos.TSCode,
+				"name":              displayName,
+				"hold_volume":       pos.HoldVolume,
+				"buy_date":          pos.BuyDate,
+				"cost_price":        pos.CostPrice,
+				"current_price":     nil,
+				"high_watermark":    nil,
+				"profit_pct":        nil,
+				"retracement":       nil,
+				"action":            "⚪ 数据待补齐",
+				"status":            "missing_data",
+				"data_trade_date":   "",
+				"latest_trade_date": latestMarketDate,
+				"is_stale":          true,
+				"reason":            fmt.Sprintf("未找到 %s 从建仓日(%s)到当前的有效日线数据。请先同步近期K线后再执行风险评估。", pos.TSCode, pos.BuyDate),
+			})
 			continue
 		}
 
@@ -399,41 +448,64 @@ func MonitorHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// 4. 战术指标计算
+		// 4. 风险指标计算
 		profitPct := (currentPrice - pos.CostPrice) / pos.CostPrice * 100
 		retracement := (highWatermark - currentPrice) / highWatermark * 100
 		ma20 := strategy.CalcMA(historyData, 20)
+		dataTradeDate := today.TradeDate
 
-		action := "🟢 安全持仓"
-		reason := "防线稳固，明日继续持股。"
+		action := "🟢 继续持有"
+		reason := "当前波动可控，可继续跟踪。"
+		status := "ok"
 
-		// 🔪 侧刀 1：利润捍卫者 (8% 动态回撤)
+		// 风控 1：利润保护 (8% 动态回撤)
 		if retracement >= 8.0 {
-			action = "🔴 执行斩首"
-			reason = fmt.Sprintf("利润回撤达标(%.2f%%)！已跌破最高水位(%.2f)的 8%% 动态防线。", retracement, highWatermark)
+			action = "🔴 建议减仓/止盈"
+			reason = fmt.Sprintf("利润回撤达到 %.2f%%，已跌破最高价 %.2f 的 8%% 动态保护线。", retracement, highWatermark)
 		} else if currentPrice < ma20 && ma20 > 0 {
-			// 🔪 侧刀 2：逻辑证伪器 (跌破 20 日生命线)
-			action = "🔴 执行斩首"
-			reason = fmt.Sprintf("破位警报！今日收盘(%.2f)已实质性击穿 20日生命线(%.2f)。", currentPrice, ma20)
+			// 风控 2：趋势转弱 (跌破 20 日均线)
+			action = "🔴 建议减仓"
+			reason = fmt.Sprintf("趋势转弱：今日收盘 %.2f 已跌破 20 日均线 %.2f。", currentPrice, ma20)
 		} else if retracement >= 6.0 {
 			// 🟡 预警状态
-			action = "🟡 警戒状态"
-			reason = fmt.Sprintf("距高点已回撤 %.2f%%，逼近 8%% 斩首线，明日重点盯防！", retracement)
+			action = "🟡 风险预警"
+			reason = fmt.Sprintf("距高点已回撤 %.2f%%，接近 8%% 动态保护线，请重点关注。", retracement)
+		}
+
+		isStale := latestMarketDate != "" && dataTradeDate < latestMarketDate
+		if isStale {
+			staleCount++
+			action = "🟡 数据待更新"
+			status = "stale_data"
+			reason = fmt.Sprintf("当前评估基于 %s 的收盘数据，落后于最新交易日 %s。请先同步近期K线后再做交易决策。", dataTradeDate, latestMarketDate)
 		}
 
 		reports = append(reports, map[string]interface{}{
-			"id":             pos.ID,
-			"ts_code":        pos.TSCode,
-			"name":           pos.StockName,
-			"cost_price":     pos.CostPrice,
-			"current_price":  currentPrice,
-			"high_watermark": highWatermark,
-			"profit_pct":     profitPct,
-			"retracement":    retracement,
-			"action":         action,
-			"reason":         reason,
+			"id":                pos.ID,
+			"ts_code":           pos.TSCode,
+			"name":              displayName,
+			"hold_volume":       pos.HoldVolume,
+			"buy_date":          pos.BuyDate,
+			"cost_price":        pos.CostPrice,
+			"current_price":     currentPrice,
+			"high_watermark":    highWatermark,
+			"profit_pct":        profitPct,
+			"retracement":       retracement,
+			"action":            action,
+			"status":            status,
+			"data_trade_date":   dataTradeDate,
+			"latest_trade_date": latestMarketDate,
+			"is_stale":          isStale,
+			"reason":            reason,
 		})
 	}
 
-	json.NewEncoder(w).Encode(APIResponse{Code: 200, Msg: "盘后审判完毕", Data: reports})
+	normalCount := len(reports) - missingCount - staleCount
+	msg := fmt.Sprintf("持仓风险评估完成：正常 %d，缺失数据 %d，数据过期 %d。", normalCount, missingCount, staleCount)
+	json.NewEncoder(w).Encode(APIResponse{Code: 200, Msg: msg, Data: reports})
+}
+
+// MonitorHandler 兼容旧路由别名（后续可逐步下线）
+func MonitorHandler(w http.ResponseWriter, r *http.Request) {
+	PositionRiskHandler(w, r)
 }

@@ -84,7 +84,7 @@ func sanitizeDate(dateStr string) string {
 	return clean
 }
 
-// parseTargetCodes 解析前端传来的指定股票代码，为空则全军出击
+// parseTargetCodes 解析前端传来的指定股票代码，为空则扫描全部
 func parseTargetCodes(rawCodes string) []string {
 	var codesToSync []string
 	if rawCodes != "" {
@@ -199,7 +199,7 @@ func triggerSyncMoneyFlowHandler(w http.ResponseWriter, r *http.Request) {
 			feeder.WaitToken()
 			flows, err := provider.FetchMoneyFlow(code, actualStart, actualEnd)
 
-			// 💥 修复静默吞没，暴露真实战况！
+			// 修复静默吞错，输出真实错误信息
 			if err != nil {
 				feeder.LogMsg("⚠️ [抽水机E %d/%d] %s 报错: %v", i+1, len(codesToSync), code, err)
 			} else if len(flows) > 0 {
@@ -245,7 +245,7 @@ func triggerSyncLimitListHandler(w http.ResponseWriter, r *http.Request) {
 	endDate := sanitizeDate(r.URL.Query().Get("end"))
 	source := r.URL.Query().Get("source") // 依然预留 source 接口供前端调度
 
-	// 挂载武器：默认启用 Tushare
+	// 默认启用 Tushare 数据源
 	var provider feeder.DataProvider = &feeder.TushareProvider{}
 	if source == "eastmoney" {
 		provider = &feeder.OpenSourceProvider{}
@@ -274,7 +274,7 @@ func triggerSyncFundHandler(w http.ResponseWriter, r *http.Request) {
 	rawCodes := r.URL.Query().Get("codes")
 	codesToSync := parseTargetCodes(rawCodes)
 
-	// 💥 武器挂载系统：根据前端指令选择弹药供应商
+	// 根据前端指令选择数据源
 	var provider feeder.DataProvider
 	if source == "tushare" {
 		provider = &feeder.TushareProvider{}
@@ -287,7 +287,7 @@ func triggerSyncFundHandler(w http.ResponseWriter, r *http.Request) {
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"code": 200,
-		"msg":  fmt.Sprintf("基本面抽水机已启动！当前火力源: %s", provider.GetName()),
+		"msg":  fmt.Sprintf("基本面同步已启动，当前数据源: %s", provider.GetName()),
 	})
 }
 
@@ -302,7 +302,7 @@ func triggerSyncKlineHandler(w http.ResponseWriter, r *http.Request) {
 	rawCodes := r.URL.Query().Get("codes")
 	codesToSync := parseTargetCodes(rawCodes)
 
-	// 💥 武器挂载系统：根据前端指令选择弹药供应商
+	// 根据前端指令选择数据源
 	var provider feeder.DataProvider
 	if source == "tushare" {
 		provider = &feeder.TushareProvider{}
@@ -315,7 +315,7 @@ func triggerSyncKlineHandler(w http.ResponseWriter, r *http.Request) {
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"code": 200,
-		"msg":  fmt.Sprintf("K线抽水机已启动！当前火力源: %s", provider.GetName()),
+		"msg":  fmt.Sprintf("K 线同步已启动，当前数据源: %s", provider.GetName()),
 	})
 }
 
@@ -491,7 +491,8 @@ func main() {
 	http.HandleFunc("/api/start_sync_limit", triggerSyncLimitListHandler)
 	http.HandleFunc("/api/start_sync_basic", triggerSyncBasicHandler)
 	http.HandleFunc("/api/set_speed", updateSpeedHandler) // 💥 注册变速接口
-	http.HandleFunc("/api/monitor", api.MonitorHandler)   // 💥 侧刀入口
+	http.HandleFunc("/api/monitor", api.MonitorHandler)   // 兼容旧入口
+	http.HandleFunc("/api/position/risk", api.PositionRiskHandler)
 	// 💥 补上缺失的持仓管理三大管线！
 	http.HandleFunc("/api/position/add", api.AddPositionHandler)
 	http.HandleFunc("/api/position/list", api.GetPositionsHandler)

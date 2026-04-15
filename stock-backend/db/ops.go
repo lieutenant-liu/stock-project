@@ -80,7 +80,7 @@ func GetKLinesFromDB(tsCode string, startDate string, endDate string) []tushare.
 	query := `
 		SELECT trade_date, open, high, low, close, pre_close, change, pct_chg, vol, amount
 		FROM daily_klines 
-		WHERE ts_code = ? AND trade_date >= ? AND trade_date <= ?
+		WHERE ts_code = ? AND trade_date >= ? AND trade_date <= ? AND trust_level >= 0
 		ORDER BY trade_date ASC
 	`
 	rows, err := DB.Query(query, tsCode, startDate, endDate)
@@ -99,6 +99,23 @@ func GetKLinesFromDB(tsCode string, startDate string, endDate string) []tushare.
 		}
 	}
 	return klines
+}
+
+// GetLatestOpenTradeDate 返回截止到 asOfDate 的最近一个开市日
+func GetLatestOpenTradeDate(asOfDate string) string {
+	if asOfDate == "" {
+		asOfDate = time.Now().Format("20060102")
+	}
+	var latest sql.NullString
+	err := DB.QueryRow(`
+		SELECT MAX(cal_date)
+		FROM trade_calendar
+		WHERE is_open = 1 AND cal_date <= ?
+	`, asOfDate).Scan(&latest)
+	if err != nil || !latest.Valid {
+		return ""
+	}
+	return latest.String
 }
 
 // BatchInsertStockBasic 批量保存全市场花名册 (已还原为安全版本)
