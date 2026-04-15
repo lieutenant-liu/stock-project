@@ -1,0 +1,13 @@
+# stock-backend local database
+stock-backend/stocks.db
+stock-backend/stocks.db-shm
+stock-backend/stocks.db-wal
+
+# stock-frontend dependencies and build output
+stock-frontend/node_modules/
+stock-frontend/dist/
+
+# common local files
+.env
+*.log
+.DS_Store
