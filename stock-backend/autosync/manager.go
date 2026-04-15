@@ -7,6 +7,7 @@ import (
 	"net"
 	"stock-backend/db"
 	"stock-backend/feeder"
+	"stock-backend/tushare"
 	"strings"
 	"sync"
 	"time"
@@ -35,7 +36,33 @@ func (m *Manager) Start() {
 	_ = db.MarkStaleRunningRunsFailed("服务重启，自动任务中断")
 	_ = db.MarkStaleRunningRunStepsFailed("服务重启，步骤中断")
 
+	// 启动后优先做一次恢复检查：若当日有失败但无成功，立即补跑，不必等到下一次定时窗口
+	go m.tryResumeTodayOnBoot()
+
 	go m.loop()
+}
+
+func (m *Manager) tryResumeTodayOnBoot() {
+	cfg, err := db.GetAutoSyncConfig()
+	if err != nil || !cfg.Enabled {
+		return
+	}
+	loc, err := loadLocation(cfg.Timezone)
+	if err != nil {
+		return
+	}
+	runDate := time.Now().In(loc).Format("20060102")
+
+	successExists, err := db.ExistsSuccessfulAutoSyncRunByDate(runDate)
+	if err != nil || successExists {
+		return
+	}
+	existsAny, err := db.ExistsAutoSyncRunByDate(runDate)
+	if err != nil || !existsAny {
+		return
+	}
+
+	go m.run("boot_resume", runDate, cfg, loc)
 }
 
 func (m *Manager) loop() {
@@ -154,6 +181,54 @@ func (m *Manager) run(triggerType, runDate string, cfg db.AutoSyncConfig, loc *t
 		name string
 		fn   func() feeder.SyncSummary
 	}{
+		{name: "calendar", fn: func() feeder.SyncSummary {
+			s := feeder.SyncSummary{Module: "calendar", Total: 1, Targeted: 1}
+			var cals []tushare.TradeCalendar
+			var e error
+			for retry := 0; retry < 3; retry++ {
+				feeder.WaitToken()
+				cals, e = tushare.FetchTradeCalendar(startDate, endDate)
+				if e == nil {
+					break
+				}
+				time.Sleep(2 * time.Second)
+			}
+			if e != nil {
+				s.Failed = 1
+				return s
+			}
+			if len(cals) > 0 {
+				db.BatchInsertTradeCalendar(cals)
+				s.Success = 1
+			} else {
+				s.Skipped = 1
+			}
+			return s
+		}},
+		{name: "basic", fn: func() feeder.SyncSummary {
+			s := feeder.SyncSummary{Module: "basic", Total: 1, Targeted: 1}
+			var basics []tushare.StockBasicInfo
+			var e error
+			for retry := 0; retry < 3; retry++ {
+				feeder.WaitToken()
+				basics, e = tushare.FetchStockBasic()
+				if e == nil {
+					break
+				}
+				time.Sleep(2 * time.Second)
+			}
+			if e != nil {
+				s.Failed = 1
+				return s
+			}
+			if len(basics) > 0 {
+				db.BatchInsertStockBasic(basics)
+				s.Success = 1
+			} else {
+				s.Skipped = 1
+			}
+			return s
+		}},
 		{name: "index", fn: func() feeder.SyncSummary { return feeder.StartSyncIndex(&feeder.TushareProvider{}, startDate, endDate) }},
 		{name: "kline", fn: func() feeder.SyncSummary {
 			return feeder.StartSyncKLine(&feeder.TushareProvider{}, codes, startDate, endDate)

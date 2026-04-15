@@ -1,10 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
+	"os"
+	"os/signal"
 	"stock-backend/api"
 	"stock-backend/autosync"
 	"stock-backend/db"
@@ -12,6 +16,7 @@ import (
 	"stock-backend/tushare"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -855,5 +860,26 @@ func main() {
 	http.HandleFunc("/api/position/list", api.GetPositionsHandler)
 	http.HandleFunc("/api/position/delete", api.DeletePositionHandler)
 	fmt.Println("🟢 工业级全字段量化引擎启动完毕！监听端口: 8081")
-	http.ListenAndServe(":8081", nil)
+
+	server := &http.Server{Addr: ":8081", Handler: nil}
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		sig := <-sigCh
+		feeder.LogMsg("🛑 [系统] 收到退出信号: %s，正在执行安全退出...", sig.String())
+		_ = db.MarkStaleRunningRunStepsFailed("人工中断，步骤未完成")
+		_ = db.MarkStaleRunningRunsFailed("人工中断，任务未完成")
+
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		if err := server.Shutdown(ctx); err != nil {
+			feeder.LogMsg("⚠️ [系统] 优雅退出失败: %v", err)
+		}
+	}()
+
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Fatalf("服务启动失败: %v", err)
+	}
+	feeder.LogMsg("👋 [系统] 服务已退出")
 }
