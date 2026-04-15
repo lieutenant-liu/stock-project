@@ -4,6 +4,7 @@ import DataPipelinePanel from './components/DataPipelinePanel'
 import DataAuditPanel from './components/DataAuditPanel'
 import PositionRiskPanel from './components/PositionRiskPanel'
 import StrategyScanPanel from './components/StrategyScanPanel'
+import TokenManagerPanel from './components/TokenManagerPanel'
 import './App.css'
 
 function App() {
@@ -338,6 +339,8 @@ function App() {
         syncMsgLimit={syncMsgLimit}
         sysLogs={sysLogs}
       />
+
+      <TokenManagerPanel onTokenActivated={() => setTushareToken('')} />
 
       <DataAuditPanel
         runDataAudit={runDataQualityCheck}

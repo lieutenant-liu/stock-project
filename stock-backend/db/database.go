@@ -176,6 +176,26 @@ func InitDB() {
 		buy_date TEXT NOT NULL
 	);`
 
+	// 11. API Token 池 (多凭证管理)
+	createAPITokenTable := `
+	CREATE TABLE IF NOT EXISTS api_tokens (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		provider TEXT NOT NULL,
+		token TEXT NOT NULL,
+		tier TEXT DEFAULT '',
+		priority INTEGER NOT NULL DEFAULT 100,
+		enabled INTEGER NOT NULL DEFAULT 1,
+		is_active INTEGER NOT NULL DEFAULT 0,
+		fail_count INTEGER NOT NULL DEFAULT 0,
+		last_ok_at TEXT DEFAULT '',
+		last_err_at TEXT DEFAULT '',
+		notes TEXT DEFAULT '',
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL
+	);
+	CREATE UNIQUE INDEX IF NOT EXISTS idx_api_tokens_provider_token ON api_tokens(provider, token);
+	CREATE INDEX IF NOT EXISTS idx_api_tokens_provider_active ON api_tokens(provider, is_active, enabled, priority);`
+
 	// 💥 黎明扫荡：物理销毁旧时代的打卡本！
 	DB.Exec(`DROP TABLE IF EXISTS sync_history;`)
 	DB.Exec(`DROP TABLE IF EXISTS sync_history_fund;`)
@@ -185,7 +205,7 @@ func InitDB() {
 	tables := []string{
 		createCalTable, createBasicTable, createKlineTable,
 		createAdjTable, createFundTable, createFinaTable,
-		createMoneyFlowTable, createStkLimitTable, createIndexTable, createPositionTable, // 👈 替换为新表
+		createMoneyFlowTable, createStkLimitTable, createIndexTable, createPositionTable, createAPITokenTable,
 	}
 	for _, sqlStr := range tables {
 		if _, err = DB.Exec(sqlStr); err != nil {
