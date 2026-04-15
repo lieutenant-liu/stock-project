@@ -53,6 +53,11 @@ func (m *Manager) tryResumeTodayOnBoot() {
 	}
 	runDate := time.Now().In(loc).Format("20060102")
 
+	isOpenDay, err := db.IsTradeOpenDate(runDate)
+	if err != nil || !isOpenDay {
+		return
+	}
+
 	successExists, err := db.ExistsSuccessfulAutoSyncRunByDate(runDate)
 	if err != nil || successExists {
 		return
@@ -112,6 +117,12 @@ func (m *Manager) tryRunScheduled() {
 
 	now := time.Now().In(loc)
 	runDate := now.Format("20060102")
+
+	isOpenDay, err := db.IsTradeOpenDate(runDate)
+	if err != nil || !isOpenDay {
+		return
+	}
+
 	triggerAt, err := parseTodayTrigger(now, cfg.DailyRunTime)
 	if err != nil || now.Before(triggerAt) {
 		return

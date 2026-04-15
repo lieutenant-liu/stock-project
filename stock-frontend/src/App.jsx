@@ -8,10 +8,28 @@ import TokenManagerPanel from './components/TokenManagerPanel'
 import AutoSyncPanel from './components/AutoSyncPanel'
 import './App.css'
 
+function formatLocalDate(date) {
+  const year = date.getFullYear()
+  const month = `${date.getMonth() + 1}`.padStart(2, '0')
+  const day = `${date.getDate()}`.padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function getDefaultDateRange() {
+  const today = new Date()
+  const oneYearAgo = new Date(today)
+  oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1)
+  return {
+    start: formatLocalDate(oneYearAgo),
+    end: formatLocalDate(today)
+  }
+}
+
 function App() {
+  const defaultRange = getDefaultDateRange()
   const [inputCode, setInputCode] = useState('600519, 000001')
-  const [syncStart, setSyncStart] = useState('2015-01-01')
-  const [syncEnd, setSyncEnd] = useState('2026-02-28')
+  const [syncStart, setSyncStart] = useState(defaultRange.start)
+  const [syncEnd, setSyncEnd] = useState(defaultRange.end)
   const [dataSource, setDataSource] = useState('opensource')
   const [tushareToken, setTushareToken] = useState('')
   const [requestSpeed, setRequestSpeed] = useState('800')

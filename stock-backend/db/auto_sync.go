@@ -191,6 +191,21 @@ func ExistsSuccessfulAutoSyncRunByDate(runDate string) (bool, error) {
 	return count > 0, err
 }
 
+func IsTradeOpenDate(runDate string) (bool, error) {
+	if runDate == "" {
+		return false, errors.New("run_date 不能为空")
+	}
+	var isOpen int
+	err := DB.QueryRow(`SELECT is_open FROM trade_calendar WHERE cal_date = ? LIMIT 1`, runDate).Scan(&isOpen)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	return isOpen == 1, nil
+}
+
 func MarkStaleRunningRunsFailed(reason string) error {
 	if reason == "" {
 		reason = "服务重启，运行任务中断"
