@@ -118,6 +118,34 @@ function AutoSyncPanel() {
     return '#95a5a6'
   }
 
+  const formatInZone = (isoText, timeZone) => {
+    const dt = new Date(isoText)
+    if (Number.isNaN(dt.getTime())) return '-'
+    return new Intl.DateTimeFormat('zh-CN', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    }).format(dt)
+  }
+
+  const renderDualTime = (isoText) => {
+    if (!isoText) return '-'
+    const utcText = formatInZone(isoText, 'UTC')
+    const shText = formatInZone(isoText, 'Asia/Shanghai')
+    if (utcText === '-') return '-'
+    return (
+      <div style={{ lineHeight: '1.45', fontSize: '0.82rem' }}>
+        <div style={{ color: '#cfd8dc' }}>UTC: {utcText}</div>
+        <div style={{ color: '#90caf9' }}>UTC+8: {shText}</div>
+      </div>
+    )
+  }
+
   return (
     <div style={{ border: '1px solid #444', borderRadius: '10px', padding: '20px', maxWidth: '1100px', margin: '0 auto 30px auto', backgroundColor: '#182028' }}>
       <h2 style={{ marginTop: 0, color: '#81d4fa' }}>⏱️ 自动更新任务控制台</h2>
@@ -221,8 +249,8 @@ function AutoSyncPanel() {
                 <td style={{ padding: '8px', border: '1px solid #324150' }}>{r.run_date}</td>
                 <td style={{ padding: '8px', border: '1px solid #324150' }}>{r.trigger_type}</td>
                 <td style={{ padding: '8px', border: '1px solid #324150', color: statusColor(r.status), fontWeight: 'bold' }}>{r.status}</td>
-                <td style={{ padding: '8px', border: '1px solid #324150' }}>{r.started_at || '-'}</td>
-                <td style={{ padding: '8px', border: '1px solid #324150' }}>{r.finished_at || '-'}</td>
+                <td style={{ padding: '8px', border: '1px solid #324150' }}>{renderDualTime(r.started_at)}</td>
+                <td style={{ padding: '8px', border: '1px solid #324150' }}>{renderDualTime(r.finished_at)}</td>
                 <td style={{ padding: '8px', border: '1px solid #324150' }}>{r.network_failures || 0}</td>
                 <td style={{ padding: '8px', border: '1px solid #324150', maxWidth: '260px', wordBreak: 'break-word' }}>{r.error_msg || '-'}</td>
                 <td style={{ padding: '8px', border: '1px solid #324150' }}>
@@ -273,8 +301,8 @@ function AutoSyncPanel() {
                   <td style={{ padding: '8px', border: '1px solid #324150' }}>{s.success}</td>
                   <td style={{ padding: '8px', border: '1px solid #324150' }}>{s.failed}</td>
                   <td style={{ padding: '8px', border: '1px solid #324150' }}>{s.skipped}</td>
-                  <td style={{ padding: '8px', border: '1px solid #324150' }}>{s.started_at || '-'}</td>
-                  <td style={{ padding: '8px', border: '1px solid #324150' }}>{s.finished_at || '-'}</td>
+                  <td style={{ padding: '8px', border: '1px solid #324150' }}>{renderDualTime(s.started_at)}</td>
+                  <td style={{ padding: '8px', border: '1px solid #324150' }}>{renderDualTime(s.finished_at)}</td>
                   <td style={{ padding: '8px', border: '1px solid #324150', maxWidth: '220px', wordBreak: 'break-word' }}>{s.error_msg || '-'}</td>
                 </tr>
               ))}
