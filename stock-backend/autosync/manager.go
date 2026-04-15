@@ -33,6 +33,7 @@ func (m *Manager) Start() {
 
 	_ = db.EnsureAutoSyncConfig()
 	_ = db.MarkStaleRunningRunsFailed("服务重启，自动任务中断")
+	_ = db.MarkStaleRunningRunStepsFailed("服务重启，步骤中断")
 
 	go m.loop()
 }
@@ -89,12 +90,21 @@ func (m *Manager) tryRunScheduled() {
 		return
 	}
 
-	exists, err := db.ExistsAutoSyncRunByDate(runDate)
-	if err != nil || exists {
+	successExists, err := db.ExistsSuccessfulAutoSyncRunByDate(runDate)
+	if err != nil || successExists {
 		return
 	}
 
-	go m.run("scheduled", runDate, cfg, loc)
+	existsAny, err := db.ExistsAutoSyncRunByDate(runDate)
+	if err != nil {
+		return
+	}
+	triggerType := "scheduled"
+	if existsAny {
+		triggerType = "scheduled_resume"
+	}
+
+	go m.run(triggerType, runDate, cfg, loc)
 }
 
 func (m *Manager) TriggerNow() error {
@@ -164,15 +174,28 @@ func (m *Manager) run(triggerType, runDate string, cfg db.AutoSyncConfig, loc *t
 	}
 
 	for _, step := range steps {
-		if err := waitForNetwork(cfg.RetryLimit, cfg.RetryBackoffSec, &networkFailures); err != nil {
-			errList = append(errList, fmt.Sprintf("%s 阶段网络不可用: %v", step.name, err))
+		stepID, stepErr := db.StartAutoSyncRunStep(runID, step.name, 1)
+		if stepErr != nil {
+			errList = append(errList, fmt.Sprintf("%s 步骤记录创建失败: %v", step.name, stepErr))
 			break
 		}
+
+		if err := waitForNetwork(cfg.RetryLimit, cfg.RetryBackoffSec, &networkFailures); err != nil {
+			errList = append(errList, fmt.Sprintf("%s 阶段网络不可用: %v", step.name, err))
+			_ = db.FinishAutoSyncRunStep(stepID, "failed", 0, 0, 1, 0, err.Error())
+			break
+		}
+
 		s := step.fn()
 		summary[step.name] = s
+		stepStatus := "success"
+		stepErrMsg := ""
 		if s.Failed > 0 {
-			errList = append(errList, fmt.Sprintf("%s 存在失败条目 %d", step.name, s.Failed))
+			stepStatus = "failed"
+			stepErrMsg = fmt.Sprintf("存在失败条目 %d", s.Failed)
+			errList = append(errList, fmt.Sprintf("%s %s", step.name, stepErrMsg))
 		}
+		_ = db.FinishAutoSyncRunStep(stepID, stepStatus, s.Targeted, s.Success, s.Failed, s.Skipped, stepErrMsg)
 	}
 
 	status := "success"

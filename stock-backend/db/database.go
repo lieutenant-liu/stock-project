@@ -228,6 +228,27 @@ func InitDB() {
 	CREATE INDEX IF NOT EXISTS idx_auto_sync_runs_date ON auto_sync_runs(run_date);
 	CREATE INDEX IF NOT EXISTS idx_auto_sync_runs_status ON auto_sync_runs(status);`
 
+	// 14. 自动同步步骤级检查点
+	createAutoSyncRunStepsTable := `
+	CREATE TABLE IF NOT EXISTS auto_sync_run_steps (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		run_id INTEGER NOT NULL,
+		step_name TEXT NOT NULL,
+		attempt INTEGER NOT NULL DEFAULT 1,
+		status TEXT NOT NULL,
+		targeted INTEGER NOT NULL DEFAULT 0,
+		success INTEGER NOT NULL DEFAULT 0,
+		failed INTEGER NOT NULL DEFAULT 0,
+		skipped INTEGER NOT NULL DEFAULT 0,
+		error_msg TEXT DEFAULT '',
+		started_at TEXT NOT NULL,
+		finished_at TEXT DEFAULT '',
+		updated_at TEXT NOT NULL,
+		FOREIGN KEY(run_id) REFERENCES auto_sync_runs(id)
+	);
+	CREATE INDEX IF NOT EXISTS idx_auto_sync_run_steps_run_id ON auto_sync_run_steps(run_id);
+	CREATE INDEX IF NOT EXISTS idx_auto_sync_run_steps_status ON auto_sync_run_steps(status);`
+
 	// 💥 黎明扫荡：物理销毁旧时代的打卡本！
 	DB.Exec(`DROP TABLE IF EXISTS sync_history;`)
 	DB.Exec(`DROP TABLE IF EXISTS sync_history_fund;`)
@@ -239,6 +260,7 @@ func InitDB() {
 		createAdjTable, createFundTable, createFinaTable,
 		createMoneyFlowTable, createStkLimitTable, createIndexTable, createPositionTable,
 		createAPITokenTable, createAutoSyncConfigTable, createAutoSyncRunsTable,
+		createAutoSyncRunStepsTable,
 	}
 	for _, sqlStr := range tables {
 		if _, err = DB.Exec(sqlStr); err != nil {

@@ -31,6 +31,22 @@ type AutoSyncRun struct {
 	UpdatedAt       string `json:"updated_at"`
 }
 
+type AutoSyncRunStep struct {
+	ID         int64  `json:"id"`
+	RunID      int64  `json:"run_id"`
+	StepName   string `json:"step_name"`
+	Attempt    int    `json:"attempt"`
+	Status     string `json:"status"`
+	Targeted   int    `json:"targeted"`
+	Success    int    `json:"success"`
+	Failed     int    `json:"failed"`
+	Skipped    int    `json:"skipped"`
+	ErrorMsg   string `json:"error_msg"`
+	StartedAt  string `json:"started_at"`
+	FinishedAt string `json:"finished_at"`
+	UpdatedAt  string `json:"updated_at"`
+}
+
 func nowRFC3339() string {
 	return time.Now().Format(time.RFC3339)
 }
@@ -169,6 +185,12 @@ func ExistsAutoSyncRunByDate(runDate string) (bool, error) {
 	return count > 0, err
 }
 
+func ExistsSuccessfulAutoSyncRunByDate(runDate string) (bool, error) {
+	var count int
+	err := DB.QueryRow(`SELECT COUNT(1) FROM auto_sync_runs WHERE run_date = ? AND status = 'success'`, runDate).Scan(&count)
+	return count > 0, err
+}
+
 func MarkStaleRunningRunsFailed(reason string) error {
 	if reason == "" {
 		reason = "服务重启，运行任务中断"
@@ -176,6 +198,25 @@ func MarkStaleRunningRunsFailed(reason string) error {
 	now := nowRFC3339()
 	_, err := DB.Exec(`
 		UPDATE auto_sync_runs
+		SET status = 'failed',
+			finished_at = ?,
+			error_msg = CASE
+				WHEN error_msg IS NULL OR error_msg = '' THEN ?
+				ELSE error_msg || '; ' || ?
+			END,
+			updated_at = ?
+		WHERE status = 'running'
+	`, now, reason, reason, now)
+	return err
+}
+
+func MarkStaleRunningRunStepsFailed(reason string) error {
+	if reason == "" {
+		reason = "服务重启，步骤执行中断"
+	}
+	now := nowRFC3339()
+	_, err := DB.Exec(`
+		UPDATE auto_sync_run_steps
 		SET status = 'failed',
 			finished_at = ?,
 			error_msg = CASE
@@ -204,4 +245,67 @@ func GetLatestAutoSyncRun() (*AutoSyncRun, error) {
 		return nil, err
 	}
 	return &r, nil
+}
+
+func StartAutoSyncRunStep(runID int64, stepName string, attempt int) (int64, error) {
+	if runID <= 0 {
+		return 0, errors.New("run_id 非法")
+	}
+	if stepName == "" {
+		return 0, errors.New("step_name 不能为空")
+	}
+	if attempt <= 0 {
+		attempt = 1
+	}
+	now := nowRFC3339()
+	res, err := DB.Exec(`
+		INSERT INTO auto_sync_run_steps(run_id, step_name, attempt, status, targeted, success, failed, skipped, error_msg, started_at, finished_at, updated_at)
+		VALUES (?, ?, ?, 'running', 0, 0, 0, 0, '', ?, '', ?)
+	`, runID, stepName, attempt, now, now)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func FinishAutoSyncRunStep(stepID int64, status string, targeted, success, failed, skipped int, errorMsg string) error {
+	if stepID <= 0 {
+		return errors.New("step id 非法")
+	}
+	if status == "" {
+		status = "failed"
+	}
+	now := nowRFC3339()
+	_, err := DB.Exec(`
+		UPDATE auto_sync_run_steps
+		SET status = ?, targeted = ?, success = ?, failed = ?, skipped = ?, error_msg = ?, finished_at = ?, updated_at = ?
+		WHERE id = ?
+	`, status, targeted, success, failed, skipped, errorMsg, now, now, stepID)
+	return err
+}
+
+func ListAutoSyncRunSteps(runID int64) ([]AutoSyncRunStep, error) {
+	if runID <= 0 {
+		return nil, errors.New("run_id 非法")
+	}
+	rows, err := DB.Query(`
+		SELECT id, run_id, step_name, attempt, status, targeted, success, failed, skipped, error_msg, started_at, finished_at, updated_at
+		FROM auto_sync_run_steps
+		WHERE run_id = ?
+		ORDER BY id ASC
+	`, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var steps []AutoSyncRunStep
+	for rows.Next() {
+		var s AutoSyncRunStep
+		if err := rows.Scan(&s.ID, &s.RunID, &s.StepName, &s.Attempt, &s.Status, &s.Targeted, &s.Success, &s.Failed, &s.Skipped, &s.ErrorMsg, &s.StartedAt, &s.FinishedAt, &s.UpdatedAt); err != nil {
+			return nil, err
+		}
+		steps = append(steps, s)
+	}
+	return steps, nil
 }

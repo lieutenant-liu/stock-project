@@ -467,6 +467,37 @@ func autoSyncRunNowHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"code": 200, "msg": "自动任务已触发"})
 }
 
+func autoSyncRunStepsHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	setCORSHeaders(w)
+	if handlePreflight(w, r) {
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(map[string]interface{}{"code": 405, "msg": "不支持的请求方法"})
+		return
+	}
+
+	runIDStr := strings.TrimSpace(r.URL.Query().Get("run_id"))
+	runID, err := strconv.ParseInt(runIDStr, 10, 64)
+	if err != nil || runID <= 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{"code": 400, "msg": "run_id 参数非法"})
+		return
+	}
+
+	steps, err := db.ListAutoSyncRunSteps(runID)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{"code": 500, "msg": err.Error()})
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{"code": 200, "data": steps})
+}
+
 // 💥 动态调整射速接口 (变速箱)
 func updateSpeedHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
@@ -811,6 +842,7 @@ func main() {
 	http.HandleFunc("/api/auto_sync/config", autoSyncConfigHandler)
 	http.HandleFunc("/api/auto_sync/runs", autoSyncRunsHandler)
 	http.HandleFunc("/api/auto_sync/run_now", autoSyncRunNowHandler)
+	http.HandleFunc("/api/auto_sync/run_steps", autoSyncRunStepsHandler)
 	http.HandleFunc("/api/start_sync_moneyflow", triggerSyncMoneyFlowHandler)
 	http.HandleFunc("/api/start_sync_fina", triggerSyncFinaHandler)
 	http.HandleFunc("/api/start_sync_limit", triggerSyncLimitListHandler)

@@ -33,6 +33,7 @@ const api = {
   getAutoSyncConfig: () => request("/api/auto_sync/config"),
   updateAutoSyncConfig: (payload) => request("/api/auto_sync/config", { method: "PUT", body: payload }),
   listAutoSyncRuns: (limit = 20) => request("/api/auto_sync/runs", { params: { limit } }),
+  listAutoSyncRunSteps: (runId) => request("/api/auto_sync/run_steps", { params: { run_id: runId } }),
   triggerAutoSyncNow: () => request("/api/auto_sync/run_now", { method: "POST" }),
   setSpeed: (speed) => request("/api/set_speed", { params: { speed } }),
   startSyncCalendar: (source) => request("/api/start_sync_calendar", { params: { source } }),
