@@ -1,0 +1,37 @@
+package main
+
+import (
+	"net/http"
+	"stock-backend/api"
+)
+
+func registerRoutes() {
+	http.HandleFunc("/api/diagnose", api.DiagnoseHandler)
+	http.HandleFunc("/api/start_sync_kline", triggerSyncKlineHandler)
+	http.HandleFunc("/api/start_sync_fund", triggerSyncFundHandler)
+	http.HandleFunc("/api/logs", getLogsHandler)
+	http.HandleFunc("/api/audit", api.AuditHandler)
+	http.HandleFunc("/api/start_sync_calendar", triggerSyncCalendarHandler)
+	http.HandleFunc("/api/start_sync_adj", triggerSyncAdjHandler)
+	http.HandleFunc("/api/start_sync_index", triggerSyncIndexHandler)
+	http.HandleFunc("/api/set_token", updateTokenHandler)
+	http.HandleFunc("/api/tokens", tokenCollectionHandler)
+	http.HandleFunc("/api/tokens/activate", tokenActivateHandler)
+	http.HandleFunc("/api/auto_sync/config", autoSyncConfigHandler)
+	http.HandleFunc("/api/auto_sync/runs", autoSyncRunsHandler)
+	http.HandleFunc("/api/auto_sync/run_now", autoSyncRunNowHandler)
+	http.HandleFunc("/api/auto_sync/run_steps", autoSyncRunStepsHandler)
+	http.HandleFunc("/api/notify/email/config", emailNotifyConfigHandler)
+	http.HandleFunc("/api/notify/email/recipients", emailRecipientsHandler)
+	http.HandleFunc("/api/notify/email/send_strategy_scan", emailSendStrategyScanHandler)
+	http.HandleFunc("/api/start_sync_moneyflow", triggerSyncMoneyFlowHandler)
+	http.HandleFunc("/api/start_sync_fina", triggerSyncFinaHandler)
+	http.HandleFunc("/api/start_sync_limit", triggerSyncLimitListHandler)
+	http.HandleFunc("/api/start_sync_basic", triggerSyncBasicHandler)
+	http.HandleFunc("/api/set_speed", updateSpeedHandler)
+	http.HandleFunc("/api/monitor", api.MonitorHandler)
+	http.HandleFunc("/api/position/risk", api.PositionRiskHandler)
+	http.HandleFunc("/api/position/add", api.AddPositionHandler)
+	http.HandleFunc("/api/position/list", api.GetPositionsHandler)
+	http.HandleFunc("/api/position/delete", api.DeletePositionHandler)
+}

@@ -9,11 +9,9 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"stock-backend/api"
 	"stock-backend/autosync"
 	"stock-backend/db"
 	"stock-backend/feeder"
-	"stock-backend/mailnotify"
 	"stock-backend/tushare"
 	"strconv"
 	"strings"
@@ -834,35 +832,7 @@ func main() {
 	autoSyncManager.Start()
 	startDynamicLighthouse()
 	feeder.InitGlobalEngine(800 * time.Millisecond)
-	http.HandleFunc("/api/diagnose", api.DiagnoseHandler)
-	http.HandleFunc("/api/start_sync_kline", triggerSyncKlineHandler)
-	http.HandleFunc("/api/start_sync_fund", triggerSyncFundHandler)
-	http.HandleFunc("/api/logs", getLogsHandler)
-	http.HandleFunc("/api/audit", api.AuditHandler) // 👈 注册体检接口
-	http.HandleFunc("/api/start_sync_calendar", triggerSyncCalendarHandler)
-	http.HandleFunc("/api/start_sync_adj", triggerSyncAdjHandler)
-	http.HandleFunc("/api/start_sync_index", triggerSyncIndexHandler)
-	http.HandleFunc("/api/set_token", updateTokenHandler)
-	http.HandleFunc("/api/tokens", tokenCollectionHandler)
-	http.HandleFunc("/api/tokens/activate", tokenActivateHandler)
-	http.HandleFunc("/api/auto_sync/config", autoSyncConfigHandler)
-	http.HandleFunc("/api/auto_sync/runs", autoSyncRunsHandler)
-	http.HandleFunc("/api/auto_sync/run_now", autoSyncRunNowHandler)
-	http.HandleFunc("/api/auto_sync/run_steps", autoSyncRunStepsHandler)
-	http.HandleFunc("/api/notify/email/config", emailNotifyConfigHandler)
-	http.HandleFunc("/api/notify/email/recipients", emailRecipientsHandler)
-	http.HandleFunc("/api/notify/email/send_strategy_scan", emailSendStrategyScanHandler)
-	http.HandleFunc("/api/start_sync_moneyflow", triggerSyncMoneyFlowHandler)
-	http.HandleFunc("/api/start_sync_fina", triggerSyncFinaHandler)
-	http.HandleFunc("/api/start_sync_limit", triggerSyncLimitListHandler)
-	http.HandleFunc("/api/start_sync_basic", triggerSyncBasicHandler)
-	http.HandleFunc("/api/set_speed", updateSpeedHandler) // 💥 注册变速接口
-	http.HandleFunc("/api/monitor", api.MonitorHandler)   // 兼容旧入口
-	http.HandleFunc("/api/position/risk", api.PositionRiskHandler)
-	// 💥 补上缺失的持仓管理三大管线！
-	http.HandleFunc("/api/position/add", api.AddPositionHandler)
-	http.HandleFunc("/api/position/list", api.GetPositionsHandler)
-	http.HandleFunc("/api/position/delete", api.DeletePositionHandler)
+	registerRoutes()
 	fmt.Println("🟢 工业级全字段量化引擎启动完毕！监听端口: 8081")
 
 	server := &http.Server{Addr: ":8081", Handler: nil}
