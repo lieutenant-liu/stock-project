@@ -1,8 +1,8 @@
 import useAutoSyncController from '../hooks/useAutoSyncController'
-import AutoSyncConfigSection from './autosync/AutoSyncConfigSection'
-import AutoSyncEmailConfigSection from './autosync/AutoSyncEmailConfigSection'
-import AutoSyncRecipientsSection from './autosync/AutoSyncRecipientsSection'
-import AutoSyncRunsSection from './autosync/AutoSyncRunsSection'
+import AutoSyncConfigSection from './AutoSyncConfigSection'
+import AutoSyncEmailConfigSection from './AutoSyncEmailConfigSection'
+import AutoSyncRecipientsSection from './AutoSyncRecipientsSection'
+import AutoSyncRunsSection from './AutoSyncRunsSection'
 
 function AutoSyncPanel() {
   const {

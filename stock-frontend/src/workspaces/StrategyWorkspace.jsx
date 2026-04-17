@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import api from '../api/client'
-import StrategyScanPanel from '../components/StrategyScanPanel'
+import StrategyScanPanel from '../features/strategy/components/StrategyScanPanel'
 import { getDefaultDateRange } from '../utils/dateRange'
 
 function StrategyWorkspace({ isActive }) {

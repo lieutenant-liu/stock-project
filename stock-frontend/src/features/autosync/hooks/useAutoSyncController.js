@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import api from '../api/client'
+import api from '../../../api/client'
 
 export default function useAutoSyncController() {
   const [loading, setLoading] = useState(false)
