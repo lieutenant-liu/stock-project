@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import api from './api/client'
 import DataPipelinePanel from './components/DataPipelinePanel'
 import DataAuditPanel from './components/DataAuditPanel'
@@ -57,7 +57,7 @@ function OverviewSection({ onJump }) {
   )
 }
 
-function DataPipelineWorkspace() {
+function DataPipelineWorkspace({ isActive }) {
   const defaultRange = getDefaultDateRange()
   const [inputCode, setInputCode] = useState('600519, 000001')
   const [syncStart, setSyncStart] = useState(defaultRange.start)
@@ -76,6 +76,7 @@ function DataPipelineWorkspace() {
   const [sysLogs, setSysLogs] = useState([])
 
   useEffect(() => {
+    if (!isActive) return undefined
     const timer = setInterval(async () => {
       try {
         const result = await api.getLogs()
@@ -87,7 +88,7 @@ function DataPipelineWorkspace() {
       }
     }, 1000)
     return () => clearInterval(timer)
-  }, [])
+  }, [isActive])
 
   const updateToken = async () => {
     if (!tushareToken) return alert('请输入 Token')
@@ -230,7 +231,7 @@ function DataPipelineWorkspace() {
   )
 }
 
-function StrategyWorkspace() {
+function StrategyWorkspace({ isActive }) {
   const defaultRange = getDefaultDateRange()
   const [inputCode, setInputCode] = useState('600519, 000001')
   const [syncStart, setSyncStart] = useState(defaultRange.start)
@@ -241,19 +242,165 @@ function StrategyWorkspace() {
   const [hasScanned, setHasScanned] = useState(false)
   const [selectedStrategy, setSelectedStrategy] = useState('ALL')
   const [currentPage, setCurrentPage] = useState(1)
+  const [scanMsg, setScanMsg] = useState('')
+  const [emailCfg, setEmailCfg] = useState({ enabled: false, auto_send_daily: false })
+  const [recipients, setRecipients] = useState([])
+  const [selectedRecipients, setSelectedRecipients] = useState({})
+  const [emailSending, setEmailSending] = useState(false)
+  const [emailMessage, setEmailMessage] = useState('')
   const pageSize = 20
+
+  const parseTargetCodes = (raw) => {
+    return String(raw || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0)
+  }
+
+  const loadEmailTargets = useCallback(async () => {
+    try {
+      const [cfgRes, recipientsRes] = await Promise.all([
+        api.getEmailNotifyConfig(),
+        api.listEmailRecipients(),
+      ])
+      if (cfgRes.code === 200 && cfgRes.data) {
+        setEmailCfg({
+          enabled: !!cfgRes.data.enabled,
+          auto_send_daily: !!cfgRes.data.auto_send_daily,
+        })
+      }
+      if (recipientsRes.code === 200) {
+        const list = recipientsRes.data || []
+        setRecipients(list)
+        setSelectedRecipients((prev) => {
+          const next = {}
+          list.forEach((item) => {
+            const key = String(item.id)
+            if (Object.prototype.hasOwnProperty.call(prev, key)) {
+              next[item.id] = !!prev[key]
+            } else {
+              next[item.id] = !!item.enabled
+            }
+          })
+          return next
+        })
+      }
+    } catch {
+      setEmailMessage('邮件配置读取失败，请稍后刷新页面')
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!isActive) return
+    loadEmailTargets()
+  }, [isActive, loadEmailTargets])
+
+  const normalizeScanMailItems = (rows) => {
+    return (rows || []).map((item) => ({
+      code: item.code || '',
+      name: item.name || '',
+      industry: item.industry || '',
+      strategy_name: item.strategy_name || '',
+      signal: item.signal || '',
+      latest_price: Number(item.latest_price) || 0,
+      buy_price: Number(item.buy_price) || 0,
+      sell_price: Number(item.sell_price) || 0,
+      stop_loss_price: Number(item.stop_loss_price) || 0,
+      message: item.message || '',
+      history: Array.isArray(item.history)
+        ? item.history
+            .map((h) => ({
+              trade_date: h.trade_date || '',
+              open: Number(h.open) || Number(h.close) || 0,
+              high: Number(h.high) || Number(h.close) || 0,
+              low: Number(h.low) || Number(h.close) || 0,
+              close: Number(h.close) || 0,
+              vol: Number(h.vol) || 0,
+            }))
+            .filter((h) => h.close > 0)
+            .slice(-60)
+        : [],
+    }))
+  }
+
+  const buildScopeMeta = (rawInputCode) => {
+    const codes = parseTargetCodes(rawInputCode)
+    if (codes.length === 0) {
+      return {
+        type: 'all_market',
+        count: 0,
+        desc: '全市场股票池（基于本地股票清单）',
+      }
+    }
+    if (codes.length <= 12) {
+      return {
+        type: 'target_list',
+        count: codes.length,
+        desc: `定向股票池（${codes.length}只）: ${codes.join(', ')}`,
+      }
+    }
+    return {
+      type: 'target_list',
+      count: codes.length,
+      desc: `定向股票池（${codes.length}只）: ${codes.slice(0, 12).join(', ')} ...`,
+    }
+  }
+
+  const sendScanEmail = async ({ autoTriggered = false, targetRows = null, scanMessage } = {}) => {
+    const rows = Array.isArray(targetRows) ? targetRows : stockList
+    if (!hasScanned && !autoTriggered) {
+      setEmailMessage('请先执行一次策略扫描')
+      return
+    }
+    const scope = buildScopeMeta(inputCode)
+    setEmailSending(true)
+    if (!autoTriggered) setEmailMessage('')
+    try {
+      const recipientIds = autoTriggered
+        ? []
+        : Object.entries(selectedRecipients)
+            .filter(([, checked]) => !!checked)
+            .map(([id]) => Number(id))
+      const finalScanMsg = ((scanMessage ?? scanMsg) || '').trim()
+      const res = await api.sendStrategyScanReportEmail({
+        input_code: inputCode,
+        start_date: syncStart,
+        end_date: syncEnd,
+        scan_msg: finalScanMsg || (rows.length === 0 ? '本次扫描未命中任何股票。' : ''),
+        scope_type: scope.type,
+        scope_count: scope.count,
+        scope_desc: scope.desc,
+        results: normalizeScanMailItems(rows),
+        recipient_ids: recipientIds,
+        auto_triggered: autoTriggered,
+      })
+      if (res.code === 200) {
+        setEmailMessage(autoTriggered ? '已按配置自动发送扫描结果邮件' : '扫描结果邮件已发送')
+      } else {
+        setEmailMessage(`邮件发送失败: ${res.msg || ''}`)
+      }
+    } catch {
+      setEmailMessage('邮件发送失败')
+    } finally {
+      setEmailSending(false)
+    }
+  }
 
   const runStrategyScan = async () => {
     setLoading(true)
     setStockList([])
     setHasScanned(true)
     setSelectedStrategy('ALL')
+    setEmailMessage('')
+    setScanMsg('')
 
     try {
       const tushareStart = syncStart.replace(/-/g, '')
       const tushareEnd = syncEnd.replace(/-/g, '')
       const result = await api.diagnose({ code: inputCode, start: tushareStart, end: tushareEnd })
       if (result.code === 200) {
+        const latestScanMsg = result.msg || ''
+        setScanMsg(latestScanMsg)
         const rawData = result.data || []
         rawData.sort((a, b) => {
           const aIsBuy = a.signal && a.signal.includes('买入')
@@ -264,10 +411,15 @@ function StrategyWorkspace() {
         })
         setStockList(rawData)
         setCurrentPage(1)
+        if (emailCfg.enabled && emailCfg.auto_send_daily) {
+          await sendScanEmail({ autoTriggered: true, targetRows: rawData, scanMessage: latestScanMsg })
+        }
       } else {
+        setHasScanned(false)
         alert(`诊断失败: ${result.msg}`)
       }
     } catch {
+      setHasScanned(false)
       alert('无法连接到诊断引擎，请检查后端服务！')
     } finally {
       setLoading(false)
@@ -301,6 +453,14 @@ function StrategyWorkspace() {
         setCurrentPage={setCurrentPage}
         pageSize={pageSize}
         fetchStockData={runStrategyScan}
+        recipients={recipients}
+        selectedRecipients={selectedRecipients}
+        setSelectedRecipients={setSelectedRecipients}
+        emailSending={emailSending}
+        emailMessage={emailMessage}
+        scanMsg={scanMsg}
+        refreshEmailTargets={loadEmailTargets}
+        sendScanEmail={() => sendScanEmail()}
       />
     </>
   )
@@ -476,6 +636,7 @@ function DataAuditWorkspace() {
 
 function App() {
   const [activeSection, setActiveSection] = useState('overview')
+  const [mountedSections, setMountedSections] = useState(() => new Set(['overview']))
 
   const sections = [
     { id: 'overview', label: '总览', desc: '关键状态与快捷入口' },
@@ -487,15 +648,14 @@ function App() {
     { id: 'token', label: 'Token管理', desc: '多凭证与激活策略' },
   ]
 
-  const renderSectionContent = () => {
-    if (activeSection === 'overview') return <OverviewSection onJump={setActiveSection} />
-    if (activeSection === 'pipeline') return <DataPipelineWorkspace />
-    if (activeSection === 'automation') return <AutoSyncPanel />
-    if (activeSection === 'strategy') return <StrategyWorkspace />
-    if (activeSection === 'position') return <PositionRiskWorkspace />
-    if (activeSection === 'audit') return <DataAuditWorkspace />
-    if (activeSection === 'token') return <TokenManagerPanel onTokenActivated={() => {}} />
-    return null
+  const activateSection = (sectionId) => {
+    setActiveSection(sectionId)
+    setMountedSections((prev) => {
+      if (prev.has(sectionId)) return prev
+      const next = new Set(prev)
+      next.add(sectionId)
+      return next
+    })
   }
 
   const activeMeta = sections.find(s => s.id === activeSection) || sections[0]
@@ -512,7 +672,7 @@ function App() {
             <button
               key={section.id}
               className={`nav-item ${activeSection === section.id ? 'active' : ''}`}
-              onClick={() => setActiveSection(section.id)}
+              onClick={() => activateSection(section.id)}
             >
               <span className="nav-label">{section.label}</span>
               <span className="nav-desc">{section.desc}</span>
@@ -536,7 +696,41 @@ function App() {
         </header>
 
         <section className="workspace-content">
-          {renderSectionContent()}
+          {mountedSections.has('overview') && (
+            <div style={{ display: activeSection === 'overview' ? 'block' : 'none' }}>
+              <OverviewSection onJump={activateSection} />
+            </div>
+          )}
+          {mountedSections.has('pipeline') && (
+            <div style={{ display: activeSection === 'pipeline' ? 'block' : 'none' }}>
+              <DataPipelineWorkspace isActive={activeSection === 'pipeline'} />
+            </div>
+          )}
+          {mountedSections.has('automation') && (
+            <div style={{ display: activeSection === 'automation' ? 'block' : 'none' }}>
+              <AutoSyncPanel />
+            </div>
+          )}
+          {mountedSections.has('strategy') && (
+            <div style={{ display: activeSection === 'strategy' ? 'block' : 'none' }}>
+              <StrategyWorkspace isActive={activeSection === 'strategy'} />
+            </div>
+          )}
+          {mountedSections.has('position') && (
+            <div style={{ display: activeSection === 'position' ? 'block' : 'none' }}>
+              <PositionRiskWorkspace />
+            </div>
+          )}
+          {mountedSections.has('audit') && (
+            <div style={{ display: activeSection === 'audit' ? 'block' : 'none' }}>
+              <DataAuditWorkspace />
+            </div>
+          )}
+          {mountedSections.has('token') && (
+            <div style={{ display: activeSection === 'token' ? 'block' : 'none' }}>
+              <TokenManagerPanel onTokenActivated={() => {}} />
+            </div>
+          )}
         </section>
       </main>
     </div>

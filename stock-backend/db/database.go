@@ -260,7 +260,7 @@ func InitDB() {
 		smtp_user TEXT NOT NULL DEFAULT '',
 		smtp_pass TEXT NOT NULL DEFAULT '',
 		smtp_from TEXT NOT NULL DEFAULT '',
-		subject_prefix TEXT NOT NULL DEFAULT '[Stock-AutoSync]',
+		subject_prefix TEXT NOT NULL DEFAULT '[Stock-Strategy]',
 		updated_at TEXT NOT NULL
 	);`
 

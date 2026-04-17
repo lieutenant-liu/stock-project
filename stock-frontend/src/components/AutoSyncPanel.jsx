@@ -22,24 +22,15 @@ function AutoSyncPanel() {
     smtp_user: '',
     smtp_pass: '',
     smtp_from: '',
-    subject_prefix: '[Stock-AutoSync]'
+    subject_prefix: '[Stock-Strategy]'
   })
 
   const [recipients, setRecipients] = useState([])
   const [recipientForm, setRecipientForm] = useState({ email: '', label: '' })
-  const [selectedRecipients, setSelectedRecipients] = useState({})
 
   const [runs, setRuns] = useState([])
   const [selectedRunId, setSelectedRunId] = useState(0)
   const [runSteps, setRunSteps] = useState([])
-
-  const hydrateRecipientSelection = (items) => {
-    const next = {}
-    ;(items || []).forEach((r) => {
-      if (r.enabled) next[r.id] = true
-    })
-    setSelectedRecipients(next)
-  }
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -77,14 +68,12 @@ function AutoSyncPanel() {
           smtp_user: emailCfgRes.data.smtp_user || '',
           smtp_pass: emailCfgRes.data.smtp_pass || '',
           smtp_from: emailCfgRes.data.smtp_from || '',
-          subject_prefix: emailCfgRes.data.subject_prefix || '[Stock-AutoSync]'
+          subject_prefix: emailCfgRes.data.subject_prefix || '[Stock-Strategy]'
         })
       }
 
       if (recipientsRes.code === 200) {
-        const list = recipientsRes.data || []
-        setRecipients(list)
-        hydrateRecipientSelection(list)
+        setRecipients(recipientsRes.data || [])
       }
     } catch {
       setMsg('自动任务配置读取失败')
@@ -150,7 +139,7 @@ function AutoSyncPanel() {
         smtp_user: emailCfg.smtp_user.trim(),
         smtp_pass: emailCfg.smtp_pass,
         smtp_from: emailCfg.smtp_from.trim(),
-        subject_prefix: emailCfg.subject_prefix.trim() || '[Stock-AutoSync]'
+        subject_prefix: emailCfg.subject_prefix.trim() || '[Stock-Strategy]'
       })
       if (res.code === 200) {
         setMsg('邮件配置已保存')
@@ -242,29 +231,6 @@ function AutoSyncPanel() {
       }
     } catch {
       setMsg('触发自动任务失败')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleSendRunEmail = async (runId) => {
-    setLoading(true)
-    try {
-      const recipientIds = Object.entries(selectedRecipients)
-        .filter(([, checked]) => !!checked)
-        .map(([id]) => Number(id))
-
-      const res = await api.sendRunReportEmail({
-        run_id: runId,
-        recipient_ids: recipientIds,
-      })
-      if (res.code === 200) {
-        setMsg('运行结果邮件已发送')
-      } else {
-        setMsg(`邮件发送失败: ${res.msg || ''}`)
-      }
-    } catch {
-      setMsg('邮件发送失败')
     } finally {
       setLoading(false)
     }
@@ -378,12 +344,12 @@ function AutoSyncPanel() {
       </div>
 
       <div style={{ marginTop: '18px', marginBottom: '18px', border: '1px solid #324150', borderRadius: '8px', padding: '12px', background: '#10202d' }}>
-        <h3 style={{ margin: '0 0 10px 0', color: '#9ad0ff' }}>📧 邮件推送配置</h3>
+        <h3 style={{ margin: '0 0 10px 0', color: '#9ad0ff' }}>📧 邮件推送配置（策略扫描结果）</h3>
         <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto 1fr auto 1fr', gap: '10px', alignItems: 'center' }}>
           <label style={{ color: '#cfd8dc' }}>启用邮件</label>
           <input type="checkbox" checked={emailCfg.enabled} onChange={(e) => setEmailCfg({ ...emailCfg, enabled: e.target.checked })} />
 
-          <label style={{ color: '#cfd8dc' }}>自动日推送</label>
+          <label style={{ color: '#cfd8dc' }}>扫描后自动发送</label>
           <input type="checkbox" checked={emailCfg.auto_send_daily} onChange={(e) => setEmailCfg({ ...emailCfg, auto_send_daily: e.target.checked })} />
 
           <label style={{ color: '#cfd8dc' }}>SMTP Host</label>
@@ -435,7 +401,6 @@ function AutoSyncPanel() {
           <table style={{ width: '100%', borderCollapse: 'collapse', color: '#e8eef5', fontSize: '0.9rem' }}>
             <thead>
               <tr style={{ background: '#24313d' }}>
-                <th style={{ padding: '6px', border: '1px solid #324150' }}>选择</th>
                 <th style={{ padding: '6px', border: '1px solid #324150' }}>邮箱</th>
                 <th style={{ padding: '6px', border: '1px solid #324150' }}>标签</th>
                 <th style={{ padding: '6px', border: '1px solid #324150' }}>状态</th>
@@ -445,18 +410,11 @@ function AutoSyncPanel() {
             <tbody>
               {recipients.length === 0 && (
                 <tr>
-                  <td colSpan="5" style={{ padding: '8px', border: '1px solid #324150', color: '#90a4ae' }}>暂无收件人</td>
+                  <td colSpan="4" style={{ padding: '8px', border: '1px solid #324150', color: '#90a4ae' }}>暂无收件人</td>
                 </tr>
               )}
               {recipients.map((r) => (
                 <tr key={r.id}>
-                  <td style={{ padding: '6px', border: '1px solid #324150' }}>
-                    <input
-                      type="checkbox"
-                      checked={!!selectedRecipients[r.id]}
-                      onChange={(e) => setSelectedRecipients({ ...selectedRecipients, [r.id]: e.target.checked })}
-                    />
-                  </td>
                   <td style={{ padding: '6px', border: '1px solid #324150' }}>{r.email}</td>
                   <td style={{ padding: '6px', border: '1px solid #324150' }}>{r.label || '-'}</td>
                   <td style={{ padding: '6px', border: '1px solid #324150', color: r.enabled ? '#4caf50' : '#ef5350' }}>{r.enabled ? '启用' : '禁用'}</td>
@@ -490,13 +448,12 @@ function AutoSyncPanel() {
               <th style={{ padding: '8px', border: '1px solid #324150' }}>网络失败次数</th>
               <th style={{ padding: '8px', border: '1px solid #324150' }}>错误信息</th>
               <th style={{ padding: '8px', border: '1px solid #324150' }}>步骤</th>
-              <th style={{ padding: '8px', border: '1px solid #324150' }}>邮件</th>
             </tr>
           </thead>
           <tbody>
             {runs.length === 0 && (
               <tr>
-                <td colSpan="10" style={{ padding: '12px', border: '1px solid #324150', color: '#93a5b8' }}>
+                <td colSpan="9" style={{ padding: '12px', border: '1px solid #324150', color: '#93a5b8' }}>
                   暂无运行记录
                 </td>
               </tr>
@@ -518,15 +475,6 @@ function AutoSyncPanel() {
                     style={{ padding: '4px 8px', borderRadius: '4px', border: 'none', background: '#4db6ac', color: '#fff', cursor: 'pointer' }}
                   >
                     查看步骤
-                  </button>
-                </td>
-                <td style={{ padding: '8px', border: '1px solid #324150' }}>
-                  <button
-                    onClick={() => handleSendRunEmail(r.id)}
-                    disabled={loading}
-                    style={{ padding: '4px 8px', borderRadius: '4px', border: 'none', background: '#f57c00', color: '#fff', cursor: 'pointer' }}
-                  >
-                    发送结果
                   </button>
                 </td>
               </tr>

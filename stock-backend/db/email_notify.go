@@ -31,7 +31,7 @@ func EnsureEmailNotifyConfig() error {
 	now := nowRFC3339()
 	_, err := DB.Exec(`
 		INSERT INTO email_notify_config(id, enabled, auto_send_daily, smtp_host, smtp_port, smtp_user, smtp_pass, smtp_from, subject_prefix, updated_at)
-		VALUES (1, 0, 0, '', 587, '', '', '', '[Stock-AutoSync]', ?)
+		VALUES (1, 0, 0, '', 587, '', '', '', '[Stock-Strategy]', ?)
 		ON CONFLICT(id) DO NOTHING
 	`, now)
 	return err
@@ -61,7 +61,7 @@ func SaveEmailNotifyConfig(cfg EmailNotifyConfig) error {
 		cfg.SMTPPort = 587
 	}
 	if strings.TrimSpace(cfg.SubjectPrefix) == "" {
-		cfg.SubjectPrefix = "[Stock-AutoSync]"
+		cfg.SubjectPrefix = "[Stock-Strategy]"
 	}
 	enabledInt := 0
 	if cfg.Enabled {

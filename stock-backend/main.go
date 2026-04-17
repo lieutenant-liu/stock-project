@@ -527,9 +527,131 @@ type emailRecipientUpdateRequest struct {
 	Enabled bool   `json:"enabled"`
 }
 
-type emailSendRunRequest struct {
-	RunID        int64   `json:"run_id"`
-	RecipientIDs []int64 `json:"recipient_ids"`
+type strategyScanMailItem struct {
+	Code          string                         `json:"code"`
+	Name          string                         `json:"name"`
+	Industry      string                         `json:"industry"`
+	StrategyName  string                         `json:"strategy_name"`
+	Signal        string                         `json:"signal"`
+	LatestPrice   float64                        `json:"latest_price"`
+	BuyPrice      float64                        `json:"buy_price"`
+	SellPrice     float64                        `json:"sell_price"`
+	StopLossPrice float64                        `json:"stop_loss_price"`
+	Message       string                         `json:"message"`
+	History       []strategyScanMailHistoryPoint `json:"history"`
+}
+
+type strategyScanMailHistoryPoint struct {
+	TradeDate string  `json:"trade_date"`
+	Open      float64 `json:"open"`
+	High      float64 `json:"high"`
+	Low       float64 `json:"low"`
+	Close     float64 `json:"close"`
+	Vol       float64 `json:"vol"`
+}
+
+type emailSendStrategyScanRequest struct {
+	InputCode     string                 `json:"input_code"`
+	StartDate     string                 `json:"start_date"`
+	EndDate       string                 `json:"end_date"`
+	ScanMsg       string                 `json:"scan_msg"`
+	ScopeType     string                 `json:"scope_type"`
+	ScopeCount    int                    `json:"scope_count"`
+	ScopeDesc     string                 `json:"scope_desc"`
+	Results       []strategyScanMailItem `json:"results"`
+	RecipientIDs  []int64                `json:"recipient_ids"`
+	AutoTriggered bool                   `json:"auto_triggered"`
+}
+
+func normalizeTradeDateCompact(raw string) string {
+	clean := strings.ReplaceAll(strings.TrimSpace(raw), "-", "")
+	clean = strings.ReplaceAll(clean, "/", "")
+	if len(clean) != 8 {
+		return ""
+	}
+	return clean
+}
+
+func hasPositiveVol(points []mailnotify.StrategyScanHistoryPoint) bool {
+	for _, p := range points {
+		if p.Vol > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func enrichHistoryWithDB(code, startDate, endDate string, points []mailnotify.StrategyScanHistoryPoint) []mailnotify.StrategyScanHistoryPoint {
+	start := sanitizeDate(startDate)
+	end := sanitizeDate(endDate)
+	dbHistory := db.GetKLinesFromDB(code, start, end)
+	if len(dbHistory) == 0 {
+		return points
+	}
+
+	type dbPoint struct {
+		open  float64
+		high  float64
+		low   float64
+		close float64
+		vol   float64
+	}
+	byDate := make(map[string]dbPoint, len(dbHistory))
+	for _, k := range dbHistory {
+		byDate[k.TradeDate] = dbPoint{
+			open:  k.Open,
+			high:  k.High,
+			low:   k.Low,
+			close: k.Close,
+			vol:   k.Vol,
+		}
+	}
+
+	for i := range points {
+		d := normalizeTradeDateCompact(points[i].TradeDate)
+		if d == "" {
+			continue
+		}
+		points[i].TradeDate = d
+		if p, ok := byDate[d]; ok {
+			if points[i].Open <= 0 {
+				points[i].Open = p.open
+			}
+			if points[i].High <= 0 {
+				points[i].High = p.high
+			}
+			if points[i].Low <= 0 {
+				points[i].Low = p.low
+			}
+			if points[i].Close <= 0 {
+				points[i].Close = p.close
+			}
+			if points[i].Vol <= 0 {
+				points[i].Vol = p.vol
+			}
+		}
+	}
+
+	if hasPositiveVol(points) {
+		return points
+	}
+
+	// 前端未携带 vol 或全部为 0 时，完全使用数据库历史作为兜底（保留最近 90 根）
+	fallback := make([]mailnotify.StrategyScanHistoryPoint, 0, len(dbHistory))
+	for _, k := range dbHistory {
+		fallback = append(fallback, mailnotify.StrategyScanHistoryPoint{
+			TradeDate: k.TradeDate,
+			Open:      k.Open,
+			High:      k.High,
+			Low:       k.Low,
+			Close:     k.Close,
+			Vol:       k.Vol,
+		})
+	}
+	if len(fallback) > 90 {
+		fallback = fallback[len(fallback)-90:]
+	}
+	return fallback
 }
 
 func emailNotifyConfigHandler(w http.ResponseWriter, r *http.Request) {
@@ -673,7 +795,7 @@ func emailRecipientsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func emailSendRunHandler(w http.ResponseWriter, r *http.Request) {
+func emailSendStrategyScanHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	setCORSHeaders(w)
 	if handlePreflight(w, r) {
@@ -686,19 +808,59 @@ func emailSendRunHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req emailSendRunRequest
+	var req emailSendStrategyScanRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]interface{}{"code": 400, "msg": "请求体格式错误"})
 		return
 	}
-	if req.RunID <= 0 {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]interface{}{"code": 400, "msg": "run_id 不能为空"})
-		return
+
+	payload := mailnotify.StrategyScanReportPayload{
+		InputCode:    strings.TrimSpace(req.InputCode),
+		StartDate:    strings.TrimSpace(req.StartDate),
+		EndDate:      strings.TrimSpace(req.EndDate),
+		ScanMsg:      strings.TrimSpace(req.ScanMsg),
+		ScopeType:    strings.TrimSpace(req.ScopeType),
+		ScopeCount:   req.ScopeCount,
+		ScopeDesc:    strings.TrimSpace(req.ScopeDesc),
+		RecipientIDs: req.RecipientIDs,
+	}
+	for _, item := range req.Results {
+		var history []mailnotify.StrategyScanHistoryPoint
+		for _, point := range item.History {
+			if point.Close <= 0 {
+				continue
+			}
+			history = append(history, mailnotify.StrategyScanHistoryPoint{
+				TradeDate: strings.TrimSpace(point.TradeDate),
+				Open:      point.Open,
+				High:      point.High,
+				Low:       point.Low,
+				Close:     point.Close,
+				Vol:       point.Vol,
+			})
+		}
+		history = enrichHistoryWithDB(strings.TrimSpace(item.Code), req.StartDate, req.EndDate, history)
+		payload.Results = append(payload.Results, mailnotify.StrategyScanItem{
+			Code:          strings.TrimSpace(item.Code),
+			Name:          strings.TrimSpace(item.Name),
+			Industry:      strings.TrimSpace(item.Industry),
+			StrategyName:  strings.TrimSpace(item.StrategyName),
+			Signal:        strings.TrimSpace(item.Signal),
+			LatestPrice:   item.LatestPrice,
+			BuyPrice:      item.BuyPrice,
+			SellPrice:     item.SellPrice,
+			StopLossPrice: item.StopLossPrice,
+			Message:       strings.TrimSpace(item.Message),
+			History:       history,
+		})
 	}
 
-	if err := mailnotify.SendRunReport(req.RunID, req.RecipientIDs); err != nil {
+	sendFn := mailnotify.SendStrategyScanReport
+	if req.AutoTriggered {
+		sendFn = mailnotify.AutoSendStrategyScanReport
+	}
+	if err := sendFn(payload); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]interface{}{"code": 400, "msg": err.Error()})
 		return
@@ -1053,7 +1215,7 @@ func main() {
 	http.HandleFunc("/api/auto_sync/run_steps", autoSyncRunStepsHandler)
 	http.HandleFunc("/api/notify/email/config", emailNotifyConfigHandler)
 	http.HandleFunc("/api/notify/email/recipients", emailRecipientsHandler)
-	http.HandleFunc("/api/notify/email/send_run", emailSendRunHandler)
+	http.HandleFunc("/api/notify/email/send_strategy_scan", emailSendStrategyScanHandler)
 	http.HandleFunc("/api/start_sync_moneyflow", triggerSyncMoneyFlowHandler)
 	http.HandleFunc("/api/start_sync_fina", triggerSyncFinaHandler)
 	http.HandleFunc("/api/start_sync_limit", triggerSyncLimitListHandler)
