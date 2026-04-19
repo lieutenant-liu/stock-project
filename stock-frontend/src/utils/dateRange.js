@@ -6,6 +6,7 @@ export function formatLocalDate(date) {
 }
 
 export function getDefaultDateRange() {
+  // 所有需要日期区间的模块统一默认“最近一年”，减少重复手动选择。
   const today = new Date()
   const oneYearAgo = new Date(today)
   oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1)

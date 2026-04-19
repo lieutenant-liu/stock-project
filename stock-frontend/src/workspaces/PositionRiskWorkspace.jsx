@@ -16,6 +16,7 @@ function PositionRiskWorkspace() {
   })
 
   const loadPositions = async () => {
+    // 持仓列表和风险评估分开加载，避免任一失败阻断另一路结果展示。
     try {
       const result = await api.listPositions()
       if (result.code === 200) {
@@ -29,6 +30,7 @@ function PositionRiskWorkspace() {
   }
 
   const runPositionRisk = async () => {
+    // 风险计算完全依赖后端统一规则，前端只负责状态管理与展示。
     setRiskLoading(true)
     try {
       const result = await api.positionRisk()
@@ -46,6 +48,7 @@ function PositionRiskWorkspace() {
   }
 
   useEffect(() => {
+    // 首次进入模块即拉取“当前持仓 + 风险快照”。
     loadPositions()
     runPositionRisk()
   }, [])

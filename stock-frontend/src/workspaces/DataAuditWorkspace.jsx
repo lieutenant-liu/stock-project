@@ -12,6 +12,7 @@ function DataAuditWorkspace() {
   const [auditLoading, setAuditLoading] = useState(false)
 
   const runDataQualityCheck = async () => {
+    // 数据体检目前按单标的执行：多代码输入时默认取第一个代码。
     if (!inputCode) {
       alert('⚠️ 数据体检必须指定明确的股票代码！')
       return

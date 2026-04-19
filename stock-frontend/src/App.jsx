@@ -10,6 +10,7 @@ import './App.css'
 
 function App() {
   const [activeSection, setActiveSection] = useState('overview')
+  // 已访问模块保留挂载，避免切换标签时丢失每个模块的本地状态。
   const [mountedSections, setMountedSections] = useState(() => new Set(['overview']))
 
   const sections = [
@@ -25,6 +26,7 @@ function App() {
   const activateSection = (sectionId) => {
     setActiveSection(sectionId)
     setMountedSections((prev) => {
+      // Set 的引用发生变化才能触发 React 重新渲染。
       if (prev.has(sectionId)) return prev
       const next = new Set(prev)
       next.add(sectionId)

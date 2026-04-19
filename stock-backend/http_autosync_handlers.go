@@ -17,10 +17,9 @@ type autoSyncConfigUpdateRequest struct {
 	RetryBackoffSec int    `json:"retry_backoff_sec"`
 }
 
+// autoSyncConfigHandler 管理自动任务配置读写。
 func autoSyncConfigHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	setCORSHeaders(w)
-	if handlePreflight(w, r) {
+	if prepareJSONWithCORS(w, r) {
 		return
 	}
 
@@ -28,27 +27,23 @@ func autoSyncConfigHandler(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		cfg, err := db.GetAutoSyncConfig()
 		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]interface{}{"code": 500, "msg": err.Error()})
+			respondInternalError(w, err)
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"code":    200,
+		respondOK(w, map[string]interface{}{
 			"data":    cfg,
 			"running": autoSyncManager.IsRunning(),
 		})
 	case http.MethodPut:
 		cfg, err := db.GetAutoSyncConfig()
 		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]interface{}{"code": 500, "msg": err.Error()})
+			respondInternalError(w, err)
 			return
 		}
 
 		var req autoSyncConfigUpdateRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]interface{}{"code": 400, "msg": "请求体格式错误"})
+			respondBadRequest(w, "请求体格式错误")
 			return
 		}
 
@@ -72,28 +67,24 @@ func autoSyncConfigHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if err := db.SaveAutoSyncConfig(cfg); err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]interface{}{"code": 400, "msg": err.Error()})
+			respondBadRequest(w, err.Error())
 			return
 		}
 		latest, _ := db.GetAutoSyncConfig()
-		json.NewEncoder(w).Encode(map[string]interface{}{"code": 200, "msg": "自动任务配置已更新", "data": latest})
+		respondOK(w, map[string]interface{}{"msg": "自动任务配置已更新", "data": latest})
 	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		json.NewEncoder(w).Encode(map[string]interface{}{"code": 405, "msg": "不支持的请求方法"})
+		respondMethodNotAllowed(w)
 	}
 }
 
+// autoSyncRunsHandler 返回自动任务运行历史与当前运行状态。
 func autoSyncRunsHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	setCORSHeaders(w)
-	if handlePreflight(w, r) {
+	if prepareJSONWithCORS(w, r) {
 		return
 	}
 
 	if r.Method != http.MethodGet {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		json.NewEncoder(w).Encode(map[string]interface{}{"code": 405, "msg": "不支持的请求方法"})
+		respondMethodNotAllowed(w)
 		return
 	}
 
@@ -106,67 +97,58 @@ func autoSyncRunsHandler(w http.ResponseWriter, r *http.Request) {
 
 	runs, err := db.ListAutoSyncRuns(limit)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]interface{}{"code": 500, "msg": err.Error()})
+		respondInternalError(w, err)
 		return
 	}
 
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"code":    200,
+	respondOK(w, map[string]interface{}{
 		"data":    runs,
 		"running": autoSyncManager.IsRunning(),
 	})
 }
 
+// autoSyncRunNowHandler 手动触发一次自动任务执行。
 func autoSyncRunNowHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	setCORSHeaders(w)
-	if handlePreflight(w, r) {
+	if prepareJSONWithCORS(w, r) {
 		return
 	}
 
 	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		json.NewEncoder(w).Encode(map[string]interface{}{"code": 405, "msg": "不支持的请求方法"})
+		respondMethodNotAllowed(w)
 		return
 	}
 
 	if err := autoSyncManager.TriggerNow(); err != nil {
-		w.WriteHeader(http.StatusConflict)
-		json.NewEncoder(w).Encode(map[string]interface{}{"code": 409, "msg": err.Error()})
+		respondConflict(w, err.Error())
 		return
 	}
 
-	json.NewEncoder(w).Encode(map[string]interface{}{"code": 200, "msg": "自动任务已触发"})
+	respondOKMsg(w, "自动任务已触发")
 }
 
+// autoSyncRunStepsHandler 返回指定 run 的步骤级执行详情。
 func autoSyncRunStepsHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	setCORSHeaders(w)
-	if handlePreflight(w, r) {
+	if prepareJSONWithCORS(w, r) {
 		return
 	}
 
 	if r.Method != http.MethodGet {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		json.NewEncoder(w).Encode(map[string]interface{}{"code": 405, "msg": "不支持的请求方法"})
+		respondMethodNotAllowed(w)
 		return
 	}
 
 	runIDStr := strings.TrimSpace(r.URL.Query().Get("run_id"))
 	runID, err := strconv.ParseInt(runIDStr, 10, 64)
 	if err != nil || runID <= 0 {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]interface{}{"code": 400, "msg": "run_id 参数非法"})
+		respondBadRequest(w, "run_id 参数非法")
 		return
 	}
 
 	steps, err := db.ListAutoSyncRunSteps(runID)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]interface{}{"code": 500, "msg": err.Error()})
+		respondInternalError(w, err)
 		return
 	}
 
-	json.NewEncoder(w).Encode(map[string]interface{}{"code": 200, "data": steps})
+	respondOK(w, map[string]interface{}{"data": steps})
 }

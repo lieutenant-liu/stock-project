@@ -19,10 +19,12 @@ type Manager struct {
 	running bool
 }
 
+// NewManager 创建自动任务调度器实例。
 func NewManager() *Manager {
 	return &Manager{}
 }
 
+// Start 只允许启动一次；并在启动时做中断任务状态修复与恢复检查。
 func (m *Manager) Start() {
 	m.mu.Lock()
 	if m.started {
@@ -67,9 +69,11 @@ func (m *Manager) tryResumeTodayOnBoot() {
 		return
 	}
 
+	// 当日存在失败/中断记录且尚无成功记录时，启动补跑。
 	go m.run("boot_resume", runDate, cfg, loc)
 }
 
+// loop 每分钟检查一次是否命中定时触发窗口。
 func (m *Manager) loop() {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
@@ -82,12 +86,14 @@ func (m *Manager) loop() {
 	}
 }
 
+// IsRunning 返回当前是否有自动任务在执行。
 func (m *Manager) IsRunning() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.running
 }
 
+// beginRun 进入运行态；若已有运行中的任务则返回 false。
 func (m *Manager) beginRun() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -98,12 +104,14 @@ func (m *Manager) beginRun() bool {
 	return true
 }
 
+// endRun 退出运行态。
 func (m *Manager) endRun() {
 	m.mu.Lock()
 	m.running = false
 	m.mu.Unlock()
 }
 
+// tryRunScheduled 在交易日 + 到达配置时间 + 当日未成功时触发任务。
 func (m *Manager) tryRunScheduled() {
 	cfg, err := db.GetAutoSyncConfig()
 	if err != nil || !cfg.Enabled {
@@ -145,6 +153,7 @@ func (m *Manager) tryRunScheduled() {
 	go m.run(triggerType, runDate, cfg, loc)
 }
 
+// TriggerNow 提供外部手动触发入口。
 func (m *Manager) TriggerNow() error {
 	if m.IsRunning() {
 		return errors.New("自动任务正在运行，请稍后再试")
@@ -162,6 +171,7 @@ func (m *Manager) TriggerNow() error {
 	return nil
 }
 
+// run 执行完整的自动任务流水线，并写入 run/step 级运行记录。
 func (m *Manager) run(triggerType, runDate string, cfg db.AutoSyncConfig, loc *time.Location) {
 	if !m.beginRun() {
 		feeder.LogMsg("⚠️ [自动任务] 当前已有任务运行中，本次触发跳过")
@@ -259,6 +269,7 @@ func (m *Manager) run(triggerType, runDate string, cfg db.AutoSyncConfig, loc *t
 		{name: "fina", fn: func() feeder.SyncSummary { return feeder.StartSyncFina(codes, startDate, endDate) }},
 	}
 
+	// 每个步骤都先写入 step 记录，再执行，最后回填统计结果。
 	for _, step := range steps {
 		stepID, stepErr := db.StartAutoSyncRunStep(runID, step.name, 1)
 		if stepErr != nil {
@@ -284,6 +295,7 @@ func (m *Manager) run(triggerType, runDate string, cfg db.AutoSyncConfig, loc *t
 		_ = db.FinishAutoSyncRunStep(stepID, stepStatus, s.Targeted, s.Success, s.Failed, s.Skipped, stepErrMsg)
 	}
 
+	// 任一步骤失败会把整次 run 标记为 failed，便于外部告警和恢复。
 	status := "success"
 	errorMsg := ""
 	if len(errList) > 0 {
@@ -314,6 +326,7 @@ func loadLocation(name string) (*time.Location, error) {
 	return time.LoadLocation(name)
 }
 
+// parseTodayTrigger 把配置的 HH:MM 解析成当天的触发时间点。
 func parseTodayTrigger(now time.Time, runAt string) (time.Time, error) {
 	parts := strings.Split(strings.TrimSpace(runAt), ":")
 	if len(parts) != 2 {
@@ -331,6 +344,7 @@ func parseTodayTrigger(now time.Time, runAt string) (time.Time, error) {
 	return time.Date(now.Year(), now.Month(), now.Day(), hour, min, 0, 0, now.Location()), nil
 }
 
+// hasNetwork 通过多目标探测判断当前网络是否可用。
 func hasNetwork() bool {
 	targets := []string{"api.tushare.pro:443", "8.8.8.8:53"}
 	for _, t := range targets {
@@ -343,6 +357,7 @@ func hasNetwork() bool {
 	return false
 }
 
+// waitForNetwork 带线性退避重试，避免弱网环境下任务立刻失败。
 func waitForNetwork(retryLimit int, backoffSec int, networkFailures *int) error {
 	if retryLimit <= 0 {
 		retryLimit = 6

@@ -23,6 +23,7 @@ function DataPipelineWorkspace({ isActive }) {
 
   useEffect(() => {
     if (!isActive) return undefined
+    // 仅在模块激活时轮询日志，避免后台页面持续占用请求。
     const timer = setInterval(async () => {
       try {
         const result = await api.getLogs()
@@ -67,6 +68,7 @@ function DataPipelineWorkspace({ isActive }) {
   }
 
   const triggerSyncKline = async () => {
+    // 日期统一转为 YYYYMMDD，与后端任务参数格式保持一致。
     setSyncMsgKline('请求管线中...')
     const result = await api.startSyncKline({
       start: syncStart.replace(/-/g, ''),
@@ -121,6 +123,7 @@ function DataPipelineWorkspace({ isActive }) {
   }
 
   const triggerSyncFina = async () => {
+    // 财务指标依赖高权限数据源，前端先做能力校验再发起请求。
     if (dataSource === 'opensource') return alert('⚠️ 财务数据为 Tushare 2000积分专属，请先切换高权引擎！')
     setSyncMsgFina('请求管线中...')
     const result = await api.startSyncFina({
@@ -132,6 +135,7 @@ function DataPipelineWorkspace({ isActive }) {
   }
 
   const triggerSyncLimit = async () => {
+    // 涨跌停绝对价同样要求高权限接口，避免无效网络请求。
     if (dataSource === 'opensource') return alert('⚠️ 涨跌停榜为 Tushare 2000积分专属，请先切换高权引擎！')
     setSyncMsgLimit('请求管线中...')
     const result = await api.startSyncLimit({

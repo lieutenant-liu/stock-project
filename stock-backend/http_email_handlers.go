@@ -78,6 +78,7 @@ func normalizeTradeDateCompact(raw string) string {
 	return clean
 }
 
+// hasPositiveVol 判断历史序列中是否已包含有效成交量数据。
 func hasPositiveVol(points []mailnotify.StrategyScanHistoryPoint) bool {
 	for _, p := range points {
 		if p.Vol > 0 {
@@ -87,6 +88,7 @@ func hasPositiveVol(points []mailnotify.StrategyScanHistoryPoint) bool {
 	return false
 }
 
+// enrichHistoryWithDB 用本地 K 线补齐邮件历史中的 OHLCV 缺口，确保图表可读性。
 func enrichHistoryWithDB(code, startDate, endDate string, points []mailnotify.StrategyScanHistoryPoint) []mailnotify.StrategyScanHistoryPoint {
 	start := sanitizeDate(startDate)
 	end := sanitizeDate(endDate)
@@ -142,7 +144,6 @@ func enrichHistoryWithDB(code, startDate, endDate string, points []mailnotify.St
 		return points
 	}
 
-	// Frontend may send stale history without vol; fallback to DB OHLCV.
 	fallback := make([]mailnotify.StrategyScanHistoryPoint, 0, len(dbHistory))
 	for _, k := range dbHistory {
 		fallback = append(fallback, mailnotify.StrategyScanHistoryPoint{
@@ -161,9 +162,7 @@ func enrichHistoryWithDB(code, startDate, endDate string, points []mailnotify.St
 }
 
 func emailNotifyConfigHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	setCORSHeaders(w)
-	if handlePreflight(w, r) {
+	if prepareJSONWithCORS(w, r) {
 		return
 	}
 
@@ -171,23 +170,20 @@ func emailNotifyConfigHandler(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		cfg, err := db.GetEmailNotifyConfig()
 		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]interface{}{"code": 500, "msg": err.Error()})
+			respondInternalError(w, err)
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]interface{}{"code": 200, "data": cfg})
+		respondOK(w, map[string]interface{}{"data": cfg})
 	case http.MethodPut:
 		cur, err := db.GetEmailNotifyConfig()
 		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]interface{}{"code": 500, "msg": err.Error()})
+			respondInternalError(w, err)
 			return
 		}
 
 		var req emailNotifyConfigUpdateRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]interface{}{"code": 400, "msg": "请求体格式错误"})
+			respondBadRequest(w, "请求体格式错误")
 			return
 		}
 
@@ -217,22 +213,19 @@ func emailNotifyConfigHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if err := db.SaveEmailNotifyConfig(cur); err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]interface{}{"code": 400, "msg": err.Error()})
+			respondBadRequest(w, err.Error())
 			return
 		}
 		latest, _ := db.GetEmailNotifyConfig()
-		json.NewEncoder(w).Encode(map[string]interface{}{"code": 200, "msg": "邮件配置已保存", "data": latest})
+		respondOK(w, map[string]interface{}{"msg": "邮件配置已保存", "data": latest})
 	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		json.NewEncoder(w).Encode(map[string]interface{}{"code": 405, "msg": "不支持的请求方法"})
+		respondMethodNotAllowed(w)
 	}
 }
 
+// emailRecipientsHandler 管理策略邮件收件人列表。
 func emailRecipientsHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	setCORSHeaders(w)
-	if handlePreflight(w, r) {
+	if prepareJSONWithCORS(w, r) {
 		return
 	}
 
@@ -240,16 +233,14 @@ func emailRecipientsHandler(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		items, err := db.ListEmailRecipients()
 		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]interface{}{"code": 500, "msg": err.Error()})
+			respondInternalError(w, err)
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]interface{}{"code": 200, "data": items})
+		respondOK(w, map[string]interface{}{"data": items})
 	case http.MethodPost:
 		var req emailRecipientCreateRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]interface{}{"code": 400, "msg": "请求体格式错误"})
+			respondBadRequest(w, "请求体格式错误")
 			return
 		}
 		enabled := true
@@ -258,66 +249,55 @@ func emailRecipientsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		id, err := db.AddEmailRecipient(req.Email, req.Label, enabled)
 		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]interface{}{"code": 400, "msg": err.Error()})
+			respondBadRequest(w, err.Error())
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]interface{}{"code": 200, "msg": "收件人已添加", "id": id})
+		respondOK(w, map[string]interface{}{"msg": "收件人已添加", "id": id})
 	case http.MethodPut:
 		var req emailRecipientUpdateRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]interface{}{"code": 400, "msg": "请求体格式错误"})
+			respondBadRequest(w, "请求体格式错误")
 			return
 		}
 		if req.ID <= 0 {
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]interface{}{"code": 400, "msg": "id 不能为空"})
+			respondBadRequest(w, "id 不能为空")
 			return
 		}
 		if err := db.UpdateEmailRecipient(req.ID, req.Label, req.Enabled); err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]interface{}{"code": 400, "msg": err.Error()})
+			respondBadRequest(w, err.Error())
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]interface{}{"code": 200, "msg": "收件人已更新"})
+		respondOKMsg(w, "收件人已更新")
 	case http.MethodDelete:
 		idStr := strings.TrimSpace(r.URL.Query().Get("id"))
 		id, err := strconv.ParseInt(idStr, 10, 64)
 		if err != nil || id <= 0 {
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]interface{}{"code": 400, "msg": "id 参数非法"})
+			respondBadRequest(w, "id 参数非法")
 			return
 		}
 		if err := db.DeleteEmailRecipient(id); err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]interface{}{"code": 400, "msg": err.Error()})
+			respondBadRequest(w, err.Error())
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]interface{}{"code": 200, "msg": "收件人已删除"})
+		respondOKMsg(w, "收件人已删除")
 	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		json.NewEncoder(w).Encode(map[string]interface{}{"code": 405, "msg": "不支持的请求方法"})
+		respondMethodNotAllowed(w)
 	}
 }
 
 func emailSendStrategyScanHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	setCORSHeaders(w)
-	if handlePreflight(w, r) {
+	if prepareJSONWithCORS(w, r) {
 		return
 	}
 
 	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		json.NewEncoder(w).Encode(map[string]interface{}{"code": 405, "msg": "不支持的请求方法"})
+		respondMethodNotAllowed(w)
 		return
 	}
 
 	var req emailSendStrategyScanRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]interface{}{"code": 400, "msg": "请求体格式错误"})
+		respondBadRequest(w, "请求体格式错误")
 		return
 	}
 
@@ -367,9 +347,8 @@ func emailSendStrategyScanHandler(w http.ResponseWriter, r *http.Request) {
 		sendFn = mailnotify.AutoSendStrategyScanReport
 	}
 	if err := sendFn(payload); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]interface{}{"code": 400, "msg": err.Error()})
+		respondBadRequest(w, err.Error())
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]interface{}{"code": 200, "msg": "邮件发送成功"})
+	respondOKMsg(w, "邮件发送成功")
 }

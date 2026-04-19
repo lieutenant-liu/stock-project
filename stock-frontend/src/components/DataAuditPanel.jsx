@@ -1,4 +1,5 @@
 function DataAuditPanel({ runDataAudit, auditLoading, auditResult }) {
+  // 体检面板只负责可视化展示，实际核查逻辑由 workspace 层触发。
   return (
     <div style={{ border: '1px solid #444', borderRadius: '10px', padding: '20px', maxWidth: '840px', margin: '0 auto 30px auto', backgroundColor: '#1a1a2e' }}>
       <h2 style={{ marginTop: 0, color: '#00d2ff' }}>🏥 数据对账与质量体检中心</h2>

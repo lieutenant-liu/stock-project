@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"stock-backend/db"
@@ -11,9 +10,24 @@ import (
 	"time"
 )
 
+// providerBySource 根据前端参数选择数据源实现。
+func providerBySource(source string) feeder.DataProvider {
+	if source == "tushare" {
+		return &feeder.TushareProvider{}
+	}
+	return &feeder.OpenSourceProvider{}
+}
+
+// trustLevelBySource 与 provider 保持一致，用于“高权覆盖低权”策略。
+func trustLevelBySource(source string) int {
+	if source == "tushare" {
+		return 100
+	}
+	return 50
+}
+
 func triggerSyncBasicHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	preparePublicJSON(w)
 
 	go func() {
 		feeder.LogMsg("📜 [基建中心] 正在向 Tushare 索要 A 股最新花名册...")
@@ -29,46 +43,33 @@ func triggerSyncBasicHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	json.NewEncoder(w).Encode(map[string]interface{}{"code": 200, "msg": "花名册同步指令已下发！"})
+	respondOKMsg(w, "花名册同步指令已下发！")
 }
 
 func updateSpeedHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	preparePublicJSON(w)
 	speedStr := r.URL.Query().Get("speed")
 
 	speedMs, err := strconv.Atoi(speedStr)
 	if err != nil || speedMs < 0 {
-		json.NewEncoder(w).Encode(map[string]interface{}{"code": 400, "msg": "请输入合法的毫秒数(大于等于0)"})
+		respondBadRequest(w, "请输入合法的毫秒数(大于等于0)")
 		return
 	}
 
 	feeder.SetBaseDelay(speedMs)
-
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"code": 200,
-		"msg":  fmt.Sprintf("引擎射速已更新为: %d 毫秒/发", speedMs),
-	})
+	respondOKMsg(w, fmt.Sprintf("引擎射速已更新为: %d 毫秒/发", speedMs))
 }
 
 func triggerSyncMoneyFlowHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	preparePublicJSON(w)
 	start, end, source := r.URL.Query().Get("start"), r.URL.Query().Get("end"), r.URL.Query().Get("source")
 	codesToSync := parseTargetCodes(r.URL.Query().Get("codes"))
 
-	var provider feeder.DataProvider = &feeder.OpenSourceProvider{}
-	if source == "tushare" {
-		provider = &feeder.TushareProvider{}
-	}
+	provider := providerBySource(source)
+	targetTrust := trustLevelBySource(source)
 
 	go func() {
 		feeder.LogMsg("🌊 [抽水机E] 资金流向引擎启动！当前源:[%s]", provider.GetName())
-
-		targetTrust := 50
-		if source == "tushare" {
-			targetTrust = 100
-		}
 
 		for i, code := range codesToSync {
 			actualStart, actualEnd, needSync := db.GetDailySyncTaskRange("daily_moneyflow", code, start, end, targetTrust)
@@ -78,7 +79,6 @@ func triggerSyncMoneyFlowHandler(w http.ResponseWriter, r *http.Request) {
 
 			feeder.WaitToken()
 			flows, err := provider.FetchMoneyFlow(code, actualStart, actualEnd)
-
 			if err != nil {
 				feeder.LogMsg("⚠️ [抽水机E %d/%d] %s 报错: %v", i+1, len(codesToSync), code, err)
 			} else if len(flows) > 0 {
@@ -87,12 +87,11 @@ func triggerSyncMoneyFlowHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		feeder.LogMsg("🎉 [抽水机E] 资金流向网络拉取完成！")
 	}()
-	json.NewEncoder(w).Encode(map[string]interface{}{"code": 200, "msg": "资金流向管线已启动！"})
+	respondOKMsg(w, "资金流向管线已启动！")
 }
 
 func triggerSyncFinaHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	preparePublicJSON(w)
 	start, end := r.URL.Query().Get("start"), r.URL.Query().Get("end")
 	codesToSync := parseTargetCodes(r.URL.Query().Get("codes"))
 
@@ -109,12 +108,11 @@ func triggerSyncFinaHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		feeder.LogMsg("🎉 [抽水机F] 季报财务拉取完成！")
 	}()
-	json.NewEncoder(w).Encode(map[string]interface{}{"code": 200, "msg": "季报财务管线(高权)已启动！"})
+	respondOKMsg(w, "季报财务管线(高权)已启动！")
 }
 
 func triggerSyncLimitListHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	preparePublicJSON(w)
 
 	startDate := sanitizeDate(r.URL.Query().Get("start"))
 	endDate := sanitizeDate(r.URL.Query().Get("end"))
@@ -126,16 +124,11 @@ func triggerSyncLimitListHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	go feeder.StartSyncStkLimit(provider, startDate, endDate)
-
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"code": 200,
-		"msg":  "涨跌停管线已启动！系统将自动提取日历空洞并执行后台灌注。",
-	})
+	respondOKMsg(w, "涨跌停管线已启动！系统将自动提取日历空洞并执行后台灌注。")
 }
 
 func triggerSyncFundHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	preparePublicJSON(w)
 
 	startDate := sanitizeDate(r.URL.Query().Get("start"))
 	endDate := sanitizeDate(r.URL.Query().Get("end"))
@@ -143,24 +136,14 @@ func triggerSyncFundHandler(w http.ResponseWriter, r *http.Request) {
 	rawCodes := r.URL.Query().Get("codes")
 	codesToSync := parseTargetCodes(rawCodes)
 
-	var provider feeder.DataProvider
-	if source == "tushare" {
-		provider = &feeder.TushareProvider{}
-	} else {
-		provider = &feeder.OpenSourceProvider{}
-	}
-
+	provider := providerBySource(source)
 	go feeder.StartSyncFund(provider, codesToSync, startDate, endDate)
 
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"code": 200,
-		"msg":  fmt.Sprintf("基本面同步已启动，当前数据源: %s", provider.GetName()),
-	})
+	respondOKMsg(w, fmt.Sprintf("基本面同步已启动，当前数据源: %s", provider.GetName()))
 }
 
 func triggerSyncKlineHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	preparePublicJSON(w)
 
 	startDate := sanitizeDate(r.URL.Query().Get("start"))
 	endDate := sanitizeDate(r.URL.Query().Get("end"))
@@ -168,37 +151,24 @@ func triggerSyncKlineHandler(w http.ResponseWriter, r *http.Request) {
 	rawCodes := r.URL.Query().Get("codes")
 	codesToSync := parseTargetCodes(rawCodes)
 
-	var provider feeder.DataProvider
-	if source == "tushare" {
-		provider = &feeder.TushareProvider{}
-	} else {
-		provider = &feeder.OpenSourceProvider{}
-	}
-
+	provider := providerBySource(source)
 	go feeder.StartSyncKLine(provider, codesToSync, startDate, endDate)
 
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"code": 200,
-		"msg":  fmt.Sprintf("K 线同步已启动，当前数据源: %s", provider.GetName()),
-	})
+	respondOKMsg(w, fmt.Sprintf("K 线同步已启动，当前数据源: %s", provider.GetName()))
 }
 
 func getLogsHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"code": 200,
-		"data": feeder.GetLogs(),
-	})
+	preparePublicJSON(w)
+	respondOK(w, map[string]interface{}{"data": feeder.GetLogs()})
 }
 
 func triggerSyncCalendarHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	preparePublicJSON(w)
 
 	source := r.URL.Query().Get("source")
 
 	go func() {
+		// 日历按年切片同步，降低单次请求失败对整体任务的影响。
 		currentYear := 1990
 		endYear := time.Now().Year() + 1
 		totalSaved := 0
@@ -225,6 +195,7 @@ func triggerSyncCalendarHandler(w http.ResponseWriter, r *http.Request) {
 		} else {
 			feeder.LogMsg("📅 [真理钟] 启动【开源多源交叉验证】日历推导...")
 			provider := &feeder.OpenSourceProvider{}
+			// 用多指数交易日并集推导开市日，作为开源模式下的兜底方案。
 			targetIndices := []string{"000001.SH", "399001.SZ", "399006.SZ"}
 
 			for y := currentYear; y <= endYear; y++ {
@@ -257,15 +228,11 @@ func triggerSyncCalendarHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"code": 200,
-		"msg":  "日历同步指令已下达，引擎正在后台运转，请查看终端日志！",
-	})
+	respondOKMsg(w, "日历同步指令已下达，引擎正在后台运转，请查看终端日志！")
 }
 
 func triggerSyncAdjHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	preparePublicJSON(w)
 
 	startDate := sanitizeDate(r.URL.Query().Get("start"))
 	endDate := sanitizeDate(r.URL.Query().Get("end"))
@@ -273,24 +240,14 @@ func triggerSyncAdjHandler(w http.ResponseWriter, r *http.Request) {
 	rawCodes := r.URL.Query().Get("codes")
 	codesToSync := parseTargetCodes(rawCodes)
 
-	var provider feeder.DataProvider
-	if source == "tushare" {
-		provider = &feeder.TushareProvider{}
-	} else {
-		provider = &feeder.OpenSourceProvider{}
-	}
-
+	provider := providerBySource(source)
 	go feeder.StartSyncAdjFactors(provider, codesToSync, startDate, endDate)
 
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"code": 200,
-		"msg":  fmt.Sprintf("复权因子抽水机已启动！当前火力源: %s", provider.GetName()),
-	})
+	respondOKMsg(w, fmt.Sprintf("复权因子抽水机已启动！当前火力源: %s", provider.GetName()))
 }
 
 func triggerSyncIndexHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	preparePublicJSON(w)
 
 	startDate := sanitizeDate(r.URL.Query().Get("start"))
 	endDate := sanitizeDate(r.URL.Query().Get("end"))
@@ -299,15 +256,10 @@ func triggerSyncIndexHandler(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		feeder.LogMsg("📊 [引擎D] 大盘指数同步启动...")
 
-		var provider feeder.DataProvider = &feeder.OpenSourceProvider{}
-		targetTrust := 50
-		if source == "tushare" {
-			provider = &feeder.TushareProvider{}
-			targetTrust = 100
-		}
+		provider := providerBySource(source)
+		targetTrust := trustLevelBySource(source)
 
 		actualStart, actualEnd, needSync := db.GetDailySyncTaskRange("index_daily", "000001.SH", startDate, endDate, targetTrust)
-
 		if needSync {
 			indices, err := provider.FetchIndexDaily("000001.SH", actualStart, actualEnd)
 			if err == nil && len(indices) > 0 {
@@ -321,5 +273,5 @@ func triggerSyncIndexHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	json.NewEncoder(w).Encode(map[string]interface{}{"code": 200, "msg": "大盘指数抽水机已启动！"})
+	respondOKMsg(w, "大盘指数抽水机已启动！")
 }

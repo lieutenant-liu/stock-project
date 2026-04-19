@@ -5,6 +5,7 @@ import (
 	"stock-backend/api"
 )
 
+// registerRoutes 统一维护所有 HTTP 路由映射，避免分散注册导致接口遗漏。
 func registerRoutes() {
 	http.HandleFunc("/api/diagnose", api.DiagnoseHandler)
 	http.HandleFunc("/api/start_sync_kline", triggerSyncKlineHandler)

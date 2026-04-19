@@ -97,6 +97,7 @@ var (
 )
 
 type SyncSummary struct {
+	// 统一同步统计结构：用于日志展示、自动任务步骤落库和前端可视化。
 	Module   string `json:"module"`
 	Total    int    `json:"total"`
 	Targeted int    `json:"targeted"`

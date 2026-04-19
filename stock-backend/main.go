@@ -68,6 +68,7 @@ func startDynamicLighthouse() {
 }
 
 func main() {
+	// 启动顺序：先初始化存储与配置，再启动后台任务与 HTTP 服务。
 	db.InitDB()
 	syncActiveProviderToken("tushare")
 	autoSyncManager.Start()
@@ -82,6 +83,7 @@ func main() {
 
 	go func() {
 		sig := <-sigCh
+		// 收到退出信号时，先把运行中的任务标记为失败，再执行优雅停机。
 		feeder.LogMsg("🛑 [系统] 收到退出信号: %s，正在执行安全退出...", sig.String())
 		_ = db.MarkStaleRunningRunStepsFailed("人工中断，步骤未完成")
 		_ = db.MarkStaleRunningRunsFailed("人工中断，任务未完成")

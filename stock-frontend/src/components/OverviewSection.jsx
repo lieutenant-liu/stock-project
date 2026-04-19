@@ -1,4 +1,5 @@
 function OverviewSection({ onJump }) {
+  // 总览卡片作为导航中枢，快速跳转到高频操作模块。
   return (
     <section className="workspace-card">
       <h2 className="workspace-card-title">模块总览</h2>

@@ -1,6 +1,7 @@
 const API_BASE = `http://${window.location.hostname}:8081`;
 
 function buildURL(path, params = {}) {
+  // 统一 query 参数序列化，避免各模块重复拼接 URL。
   const url = new URL(`${API_BASE}${path}`);
   Object.entries(params).forEach(([key, value]) => {
     if (value !== undefined && value !== null && value !== "") {
@@ -12,6 +13,7 @@ function buildURL(path, params = {}) {
 
 async function request(path, options = {}) {
   const { method = "GET", params, body } = options;
+  // 所有接口都走同一出口，便于未来统一增加鉴权/重试/错误埋点。
   const response = await fetch(buildURL(path, params), {
     method,
     headers: body ? { "Content-Type": "application/json" } : undefined,
@@ -20,6 +22,7 @@ async function request(path, options = {}) {
   return response.json();
 }
 
+// 领域 API 清单：前端各模块只依赖这里，不直接写 fetch。
 const api = {
   getLogs: () => request("/api/logs"),
   diagnose: (params) => request("/api/diagnose", { params }),

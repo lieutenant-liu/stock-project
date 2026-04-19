@@ -73,6 +73,44 @@ type TushareResponse struct {
 	} `json:"data"`
 }
 
+// executeTushareRequest 统一封装 Tushare 请求、响应解析与错误处理。
+func executeTushareRequest(reqBody TushareRequest) (TushareResponse, error) {
+	var tsResp TushareResponse
+
+	jsonData, err := json.Marshal(reqBody)
+	if err != nil {
+		return tsResp, fmt.Errorf("请求序列化失败: %w", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, TUSHARE_URL, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return tsResp, fmt.Errorf("请求创建失败: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return tsResp, fmt.Errorf("网络请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return tsResp, fmt.Errorf("响应读取失败: %w", err)
+	}
+
+	if err := json.Unmarshal(body, &tsResp); err != nil {
+		return tsResp, fmt.Errorf("响应解析失败: %w", err)
+	}
+
+	if tsResp.Code != 0 {
+		return tsResp, fmt.Errorf("Tushare 报错: %s", tsResp.Msg)
+	}
+
+	return tsResp, nil
+}
+
 // 💥 升级：11大金刚全字段
 type DailyKLine struct {
 	TSCode    string  `json:"ts_code"`
@@ -127,24 +165,9 @@ func FetchStockHistory(tsCode string, startDate string, endDate string) ([]Daily
 			Fields: "ts_code,trade_date,open,high,low,close,pre_close,change,pct_chg,vol,amount",
 		}
 
-		jsonData, _ := json.Marshal(reqBody)
-		req, _ := http.NewRequest("POST", TUSHARE_URL, bytes.NewBuffer(jsonData))
-		req.Header.Set("Content-Type", "application/json")
-		client := &http.Client{}
-		resp, err := client.Do(req)
-
+		tsResp, err := executeTushareRequest(reqBody)
 		if err != nil {
-			return nil, fmt.Errorf("网络请求失败: %v", err)
-		}
-
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-
-		var tsResp TushareResponse
-		json.Unmarshal(body, &tsResp)
-
-		if tsResp.Code != 0 {
-			return nil, fmt.Errorf("Tushare 报错: %s", tsResp.Msg)
+			return nil, err
 		}
 
 		for _, item := range tsResp.Data.Items {
@@ -196,23 +219,9 @@ func FetchStockBasic() ([]StockBasicInfo, error) {
 		Fields: "ts_code,name,industry,market,list_date",
 	}
 
-	jsonData, _ := json.Marshal(reqBody)
-	req, _ := http.NewRequest("POST", TUSHARE_URL, bytes.NewBuffer(jsonData))
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	tsResp, err := executeTushareRequest(reqBody)
 	if err != nil {
-		return nil, fmt.Errorf("网络请求失败: %v", err)
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-	var tsResp TushareResponse
-	json.Unmarshal(body, &tsResp)
-
-	if tsResp.Code != 0 {
-		return nil, fmt.Errorf("Tushare 报错: %s", tsResp.Msg)
+		return nil, err
 	}
 
 	var basics []StockBasicInfo
@@ -269,23 +278,9 @@ func FetchDailyBasic(tsCode string, startDate string, endDate string) ([]DailyFu
 		Fields: "ts_code,trade_date,pe,pb,total_mv,turnover_rate,dv_ratio",
 	}
 
-	jsonData, _ := json.Marshal(reqBody)
-	req, _ := http.NewRequest("POST", TUSHARE_URL, bytes.NewBuffer(jsonData))
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	tsResp, err := executeTushareRequest(reqBody)
 	if err != nil {
-		return nil, fmt.Errorf("网络请求失败: %v", err)
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-	var tsResp TushareResponse
-	json.Unmarshal(body, &tsResp)
-
-	if tsResp.Code != 0 {
-		return nil, fmt.Errorf("Tushare 基本面报错: %s", tsResp.Msg)
+		return nil, fmt.Errorf("拉取日线基本面失败: %w", err)
 	}
 
 	var fundamentals []DailyFundamental
@@ -330,23 +325,9 @@ func FetchTradeCalendar(startDate string, endDate string) ([]TradeCalendar, erro
 		Fields: "cal_date,is_open",
 	}
 
-	jsonData, _ := json.Marshal(reqBody)
-	req, _ := http.NewRequest("POST", TUSHARE_URL, bytes.NewBuffer(jsonData))
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	tsResp, err := executeTushareRequest(reqBody)
 	if err != nil {
-		return nil, fmt.Errorf("网络请求失败: %v", err)
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-	var tsResp TushareResponse
-	json.Unmarshal(body, &tsResp)
-
-	if tsResp.Code != 0 {
-		return nil, fmt.Errorf("Tushare 报错: %s", tsResp.Msg)
+		return nil, err
 	}
 
 	var calendars []TradeCalendar
@@ -381,23 +362,9 @@ func FetchAdjFactors(tsCode string, startDate string, endDate string) ([]AdjFact
 		Fields: "ts_code,trade_date,adj_factor",
 	}
 
-	jsonData, _ := json.Marshal(reqBody)
-	req, _ := http.NewRequest("POST", TUSHARE_URL, bytes.NewBuffer(jsonData))
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	tsResp, err := executeTushareRequest(reqBody)
 	if err != nil {
-		return nil, fmt.Errorf("网络请求失败: %v", err)
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-	var tsResp TushareResponse
-	json.Unmarshal(body, &tsResp)
-
-	if tsResp.Code != 0 {
-		return nil, fmt.Errorf("Tushare 报错: %s", tsResp.Msg)
+		return nil, err
 	}
 
 	var factors []AdjFactor
@@ -440,23 +407,9 @@ func FetchFinaIndicators(tsCode string, startDate string, endDate string) ([]Fin
 		Fields: "ts_code,ann_date,end_date,update_flag,roe,netprofit_yoy,cfps",
 	}
 
-	jsonData, _ := json.Marshal(reqBody)
-	req, _ := http.NewRequest("POST", TUSHARE_URL, bytes.NewBuffer(jsonData))
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	tsResp, err := executeTushareRequest(reqBody)
 	if err != nil {
-		return nil, fmt.Errorf("网络请求失败: %v", err)
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-	var tsResp TushareResponse
-	json.Unmarshal(body, &tsResp)
-
-	if tsResp.Code != 0 {
-		return nil, fmt.Errorf("Tushare 报错: %s", tsResp.Msg)
+		return nil, err
 	}
 
 	var indicators []FinaIndicator
@@ -505,18 +458,9 @@ func FetchMoneyFlow(tsCode, startDate, endDate string) ([]DailyMoneyFlow, error)
 		Params:  map[string]string{"ts_code": tsCode, "start_date": startDate, "end_date": endDate},
 		Fields:  "ts_code,trade_date,buy_lg_vol,sell_lg_vol,buy_elg_vol,sell_elg_vol,net_mf_vol",
 	}
-	jsonData, _ := json.Marshal(reqBody)
-	resp, err := http.Post(TUSHARE_URL, "application/json", bytes.NewBuffer(jsonData))
+	tsResp, err := executeTushareRequest(reqBody)
 	if err != nil {
 		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-	var tsResp TushareResponse
-	json.Unmarshal(body, &tsResp)
-	if tsResp.Code != 0 {
-		return nil, fmt.Errorf("Tushare报错: %s", tsResp.Msg)
 	}
 
 	var flows []DailyMoneyFlow
@@ -556,18 +500,9 @@ func FetchStkLimit(tradeDate string) ([]StkLimit, error) {
 		Fields:  "trade_date,ts_code,up_limit,down_limit",
 	}
 
-	jsonData, _ := json.Marshal(reqBody)
-	resp, err := http.Post(TUSHARE_URL, "application/json", bytes.NewBuffer(jsonData))
+	tsResp, err := executeTushareRequest(reqBody)
 	if err != nil {
 		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-	var tsResp TushareResponse
-	json.Unmarshal(body, &tsResp)
-	if tsResp.Code != 0 {
-		return nil, fmt.Errorf("Tushare报错: %s", tsResp.Msg)
 	}
 
 	var limits []StkLimit
@@ -606,16 +541,10 @@ func FetchIndexDaily(tsCode, startDate, endDate string) ([]IndexDaily, error) {
 		Params:  map[string]string{"ts_code": tsCode, "start_date": startDate, "end_date": endDate},
 		Fields:  "ts_code,trade_date,close,vol,pct_chg",
 	}
-	jsonData, _ := json.Marshal(reqBody)
-	resp, err := http.Post(TUSHARE_URL, "application/json", bytes.NewBuffer(jsonData))
+	tsResp, err := executeTushareRequest(reqBody)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-	var tsResp TushareResponse
-	json.Unmarshal(body, &tsResp)
 
 	var indices []IndexDaily
 	for _, item := range tsResp.Data.Items {

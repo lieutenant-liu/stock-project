@@ -18,6 +18,7 @@ type APIResponse struct {
 	Data interface{} `json:"data"`
 }
 
+// normalizeTSCode 支持前端输入纯数字代码并自动补齐交易所后缀。
 func normalizeTSCode(rawCode string) string {
 	cleanCode := strings.TrimSpace(rawCode)
 	if cleanCode == "" {
@@ -38,6 +39,7 @@ func normalizeTSCode(rawCode string) string {
 	return cleanCode
 }
 
+// resolveStockName 优先使用前端传值，缺失时回查 stock_basic 表做兜底。
 func resolveStockName(tsCode, rawName string) string {
 	name := strings.TrimSpace(rawName)
 	if name != "" && name != "未知" {
@@ -55,8 +57,7 @@ func resolveStockName(tsCode, rawName string) string {
 
 // DiagnoseHandler 策略扫描核心 API (V3.0 多态调度架构)
 func DiagnoseHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	prepareAPIJSON(w)
 
 	rawCodes := r.URL.Query().Get("code")
 	startDate := r.URL.Query().Get("start")
@@ -80,18 +81,9 @@ func DiagnoseHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		parts := strings.Split(rawCodes, ",")
 		for _, p := range parts {
-			cleanCode := strings.TrimSpace(p)
+			cleanCode := normalizeTSCode(p)
 			if cleanCode == "" {
 				continue
-			}
-			if !strings.Contains(cleanCode, ".") {
-				if strings.HasPrefix(cleanCode, "6") {
-					cleanCode += ".SH"
-				} else if strings.HasPrefix(cleanCode, "0") || strings.HasPrefix(cleanCode, "3") {
-					cleanCode += ".SZ"
-				} else if strings.HasPrefix(cleanCode, "4") || strings.HasPrefix(cleanCode, "8") {
-					cleanCode += ".BJ"
-				}
 			}
 			codeList = append(codeList, cleanCode)
 		}
@@ -122,11 +114,7 @@ func DiagnoseHandler(w http.ResponseWriter, r *http.Request) {
 
 	// 如果大盘处于风险区间，且用户正在执行“全市场扫描”，则直接拦截买入信号输出
 	if !isMarketSafe && isAllMarket {
-		json.NewEncoder(w).Encode(APIResponse{
-			Code: 200,
-			Msg:  marketMsg + "（系统已自动拦截今日全市场买入信号，建议等待环境改善）",
-			Data: []map[string]interface{}{},
-		})
+		writeAPIResponse(w, 200, marketMsg+"（系统已自动拦截今日全市场买入信号，建议等待环境改善）", []map[string]interface{}{})
 		return
 	}
 	// =========================================================
@@ -274,62 +262,37 @@ func DiagnoseHandler(w http.ResponseWriter, r *http.Request) {
 		fmt.Printf("🎉 [扫描中心] 扫描完毕，策略引擎共发现 %d 个买点\n", len(results))
 	}
 
-	json.NewEncoder(w).Encode(APIResponse{
-		Code: 200,
-		Msg:  fmt.Sprintf("扫描完毕，共发现 %d 个符合策略的买点", len(results)),
-		Data: results,
-	})
+	writeAPIResponse(w, 200, fmt.Sprintf("扫描完毕，共发现 %d 个符合策略的买点", len(results)), results)
 }
 
 // AuditHandler 数据体检接口 (支持免后缀输入)
 func AuditHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	prepareAPIJSON(w)
 
 	code := r.URL.Query().Get("code")
 	start := r.URL.Query().Get("start")
 	end := r.URL.Query().Get("end")
 
-	code = strings.TrimSpace(code)
+	code = normalizeTSCode(code)
 	if code == "" {
-		json.NewEncoder(w).Encode(APIResponse{Code: 400, Msg: "请提供股票代码"})
+		writeAPIResponse(w, 400, "请提供股票代码", nil)
 		return
 	}
 
-	// 💥 智能补齐后缀
-	if !strings.Contains(code, ".") {
-		if strings.HasPrefix(code, "6") {
-			code += ".SH"
-		} else if strings.HasPrefix(code, "0") || strings.HasPrefix(code, "3") {
-			code += ".SZ"
-		} else if strings.HasPrefix(code, "4") || strings.HasPrefix(code, "8") {
-			code += ".BJ"
-		}
-	}
-
 	report := db.RunDataAudit(code, start, end)
-	json.NewEncoder(w).Encode(APIResponse{
-		Code: 200,
-		Msg:  "体检完成",
-		Data: report,
-	})
+	writeAPIResponse(w, 200, "体检完成", report)
 }
 
 // AddPositionHandler 供前端表单调用：手动录入持仓
 func AddPositionHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-
-	if r.Method == "OPTIONS" {
-		w.WriteHeader(http.StatusOK)
+	prepareAPIJSONForWriteOps(w)
+	if handleAPIOptions(w, r) {
 		return
 	}
 
 	var pos db.Position
 	if err := json.NewDecoder(r.Body).Decode(&pos); err != nil {
-		json.NewEncoder(w).Encode(APIResponse{Code: 400, Msg: "参数解析失败"})
+		writeAPIResponse(w, 400, "参数解析失败", nil)
 		return
 	}
 
@@ -338,27 +301,21 @@ func AddPositionHandler(w http.ResponseWriter, r *http.Request) {
 
 	// 防呆拦截
 	if pos.CostPrice <= 0 || pos.HoldVolume <= 0 {
-		json.NewEncoder(w).Encode(APIResponse{Code: 400, Msg: "成本价和持仓量必须大于 0"})
+		writeAPIResponse(w, 400, "成本价和持仓量必须大于 0", nil)
 		return
 	}
 
 	if err := db.AddPosition(pos); err != nil {
-		json.NewEncoder(w).Encode(APIResponse{Code: 500, Msg: "录入失败: " + err.Error()})
+		writeAPIResponse(w, 500, "录入失败: "+err.Error(), nil)
 		return
 	}
-	json.NewEncoder(w).Encode(APIResponse{Code: 200, Msg: "持仓已添加"})
+	writeAPIResponse(w, 200, "持仓已添加", nil)
 }
 
 // DeletePositionHandler 供前端调用：手动移出持仓
 func DeletePositionHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	// 💥 同样补齐 CORS 跨域防弹衣
-	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-
-	if r.Method == "OPTIONS" {
-		w.WriteHeader(http.StatusOK)
+	prepareAPIJSONForWriteOps(w)
+	if handleAPIOptions(w, r) {
 		return
 	}
 
@@ -366,34 +323,32 @@ func DeletePositionHandler(w http.ResponseWriter, r *http.Request) {
 		ID int `json:"id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		json.NewEncoder(w).Encode(APIResponse{Code: 400, Msg: "参数解析失败"})
+		writeAPIResponse(w, 400, "参数解析失败", nil)
 		return
 	}
 	if err := db.DeletePosition(req.ID); err != nil {
-		json.NewEncoder(w).Encode(APIResponse{Code: 500, Msg: "移除失败: " + err.Error()})
+		writeAPIResponse(w, 500, "移除失败: "+err.Error(), nil)
 		return
 	}
-	json.NewEncoder(w).Encode(APIResponse{Code: 200, Msg: "仓位已清除"})
+	writeAPIResponse(w, 200, "仓位已清除", nil)
 }
 
 // GetPositionsHandler 供前端调用：展示当前持仓列表
 func GetPositionsHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	prepareAPIJSON(w)
 	positions, _ := db.GetAllPositions()
-	json.NewEncoder(w).Encode(APIResponse{Code: 200, Msg: "success", Data: positions})
+	writeAPIResponse(w, 200, "success", positions)
 }
 
 // ==========================================
 // 持仓风险评估核心接口 (PositionRiskHandler)
 // ==========================================
 func PositionRiskHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	prepareAPIJSON(w)
 
 	positions, err := db.GetAllPositions()
 	if err != nil || len(positions) == 0 {
-		json.NewEncoder(w).Encode(APIResponse{Code: 200, Msg: "当前无持仓，风险评估为空。", Data: []map[string]interface{}{}})
+		writeAPIResponse(w, 200, "当前无持仓，风险评估为空。", []map[string]interface{}{})
 		return
 	}
 
@@ -502,7 +457,7 @@ func PositionRiskHandler(w http.ResponseWriter, r *http.Request) {
 
 	normalCount := len(reports) - missingCount - staleCount
 	msg := fmt.Sprintf("持仓风险评估完成：正常 %d，缺失数据 %d，数据过期 %d。", normalCount, missingCount, staleCount)
-	json.NewEncoder(w).Encode(APIResponse{Code: 200, Msg: msg, Data: reports})
+	writeAPIResponse(w, 200, msg, reports)
 }
 
 // MonitorHandler 兼容旧路由别名（后续可逐步下线）

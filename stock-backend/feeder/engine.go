@@ -72,6 +72,7 @@ func PushToSink(taskType, tsCode string, data interface{}) {
 // dataSinkWorker 单向落盘守护进程 (系统唯一的写入出口)
 func dataSinkWorker() {
 	for task := range sinkChan {
+		// 所有模块统一从这里落库，便于后续做限流、批量写与失败重试。
 		saved := 0
 		switch task.Type {
 		case "kline":

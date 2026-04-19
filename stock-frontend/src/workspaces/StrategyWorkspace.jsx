@@ -23,6 +23,7 @@ function StrategyWorkspace({ isActive }) {
   const pageSize = 20
 
   const parseTargetCodes = (raw) => {
+    // 空输入表示全市场扫描；有输入时按逗号拆分为定向股票池。
     return String(raw || '')
       .split(',')
       .map((s) => s.trim())
@@ -30,6 +31,7 @@ function StrategyWorkspace({ isActive }) {
   }
 
   const loadEmailTargets = useCallback(async () => {
+    // 配置与收件人并行加载，减少等待时间。
     try {
       const [cfgRes, recipientsRes] = await Promise.all([
         api.getEmailNotifyConfig(),
@@ -68,6 +70,7 @@ function StrategyWorkspace({ isActive }) {
   }, [isActive, loadEmailTargets])
 
   const normalizeScanMailItems = (rows) => {
+    // 邮件接口使用独立数据结构，避免前端渲染字段与邮件字段耦合。
     return (rows || []).map((item) => ({
       code: item.code || '',
       name: item.name || '',
@@ -96,6 +99,7 @@ function StrategyWorkspace({ isActive }) {
   }
 
   const buildScopeMeta = (rawInputCode) => {
+    // 发送邮件时附带“扫描范围元信息”，让结果来源可追溯。
     const codes = parseTargetCodes(rawInputCode)
     if (codes.length === 0) {
       return {
@@ -119,6 +123,7 @@ function StrategyWorkspace({ isActive }) {
   }
 
   const sendScanEmail = async ({ autoTriggered = false, targetRows = null, scanMessage } = {}) => {
+    // 支持“手动发送”和“扫描后自动发送”两种路径，共享同一发送逻辑。
     const rows = Array.isArray(targetRows) ? targetRows : stockList
     if (!hasScanned && !autoTriggered) {
       setEmailMessage('请先执行一次策略扫描')
@@ -159,6 +164,7 @@ function StrategyWorkspace({ isActive }) {
   }
 
   const runStrategyScan = async () => {
+    // 每次扫描前先重置视图态，避免复用上一次结果造成误解。
     setLoading(true)
     setStockList([])
     setHasScanned(true)
@@ -175,6 +181,7 @@ function StrategyWorkspace({ isActive }) {
         setScanMsg(latestScanMsg)
         const rawData = result.data || []
         rawData.sort((a, b) => {
+          // 买入信号优先展示，降低人工筛选成本。
           const aIsBuy = a.signal && a.signal.includes('买入')
           const bIsBuy = b.signal && b.signal.includes('买入')
           if (aIsBuy && !bIsBuy) return -1
