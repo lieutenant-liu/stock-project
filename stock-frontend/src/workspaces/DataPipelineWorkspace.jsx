@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import api from '../api/client'
-import DataPipelinePanel from '../components/DataPipelinePanel'
+import DataPipelinePanel from '../features/pipeline/components/DataPipelinePanel'
 import { getDefaultDateRange } from '../utils/dateRange'
 
 function DataPipelineWorkspace({ isActive }) {

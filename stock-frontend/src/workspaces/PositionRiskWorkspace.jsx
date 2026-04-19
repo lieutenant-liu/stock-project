@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import api from '../api/client'
-import PositionRiskPanel from '../components/PositionRiskPanel'
+import PositionRiskPanel from '../features/position/components/PositionRiskPanel'
 
 function PositionRiskWorkspace() {
   const [deployedPositions, setDeployedPositions] = useState([])
