@@ -62,6 +62,7 @@ const api = {
   listPositions: () => request("/api/position/list"),
   addPosition: (payload) => request("/api/position/add", { method: "POST", body: payload }),
   deletePosition: (payload) => request("/api/position/delete", { method: "POST", body: payload }),
+  runBacktest: (payload) => request("/api/backtest", { method: "POST", body: payload }),
 };
 
 export default api;

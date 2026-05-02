@@ -182,6 +182,31 @@ func BatchInsertStkLimit(limits []tushare.StkLimit) int {
 	return insertCount
 }
 
+// GetStkLimitFromDB 提取涨跌停价格数据（供回测引擎做流动性过滤）。
+func GetStkLimitFromDB(tsCode string, startDate string, endDate string) []tushare.StkLimit {
+	var limits []tushare.StkLimit
+	query := `
+		SELECT trade_date, ts_code, up_limit, down_limit
+		FROM daily_stk_limit
+		WHERE ts_code = ? AND trade_date >= ? AND trade_date <= ?
+		ORDER BY trade_date ASC
+	`
+	rows, err := DB.Query(query, tsCode, startDate, endDate)
+	if err != nil {
+		return limits
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var l tushare.StkLimit
+		l.TSCode = tsCode
+		if err := rows.Scan(&l.TradeDate, &l.TSCode, &l.UpLimit, &l.DownLimit); err == nil {
+			limits = append(limits, l)
+		}
+	}
+	return limits
+}
+
 // GetLimitUpPremium 通过 K 线收盘价与涨停价联合透视计算溢价率。
 func GetLimitUpPremium(yesterday string, today string) (int, float64) {
 	query := `

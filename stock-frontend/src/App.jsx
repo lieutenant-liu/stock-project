@@ -6,6 +6,7 @@ import DataPipelineWorkspace from './workspaces/DataPipelineWorkspace'
 import StrategyWorkspace from './workspaces/StrategyWorkspace'
 import PositionRiskWorkspace from './workspaces/PositionRiskWorkspace'
 import DataAuditWorkspace from './workspaces/DataAuditWorkspace'
+import BacktestWorkspace from './workspaces/BacktestWorkspace'
 import './App.css'
 
 function App() {
@@ -18,6 +19,7 @@ function App() {
     { id: 'pipeline', label: '数据管线', desc: '同步配置与任务触发' },
     { id: 'automation', label: '自动任务', desc: '定时任务与运行记录' },
     { id: 'strategy', label: '策略扫描', desc: '信号筛选与图表分析' },
+    { id: 'backtest', label: '回测验证', desc: '历史策略回测与绩效分析' },
     { id: 'position', label: '持仓风控', desc: '持仓录入与风险建议' },
     { id: 'audit', label: '数据体检', desc: '数据完整性核查' },
     { id: 'token', label: 'Token管理', desc: '多凭证与激活策略' },
@@ -90,6 +92,11 @@ function App() {
           {mountedSections.has('strategy') && (
             <div style={{ display: activeSection === 'strategy' ? 'block' : 'none' }}>
               <StrategyWorkspace isActive={activeSection === 'strategy'} />
+            </div>
+          )}
+          {mountedSections.has('backtest') && (
+            <div style={{ display: activeSection === 'backtest' ? 'block' : 'none' }}>
+              <BacktestWorkspace />
             </div>
           )}
           {mountedSections.has('position') && (
