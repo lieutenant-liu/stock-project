@@ -560,3 +560,8 @@ func FetchIndexDaily(tsCode, startDate, endDate string) ([]IndexDaily, error) {
 	}
 	return indices, nil
 }
+
+// ExecuteTestRequest 导出内部请求执行器，供权限探测模块使用。
+func ExecuteTestRequest(req TushareRequest) (TushareResponse, error) {
+	return executeTushareRequest(req)
+}

@@ -33,6 +33,7 @@ const api = {
   updateTokenItem: (payload) => request("/api/tokens", { method: "PUT", body: payload }),
   deleteTokenItem: (id) => request("/api/tokens", { method: "DELETE", params: { id } }),
   activateToken: (payload) => request("/api/tokens/activate", { method: "POST", body: payload }),
+  testTokenPermissions: () => request("/api/tokens/test_permissions", { method: "POST" }),
   getAutoSyncConfig: () => request("/api/auto_sync/config"),
   updateAutoSyncConfig: (payload) => request("/api/auto_sync/config", { method: "PUT", body: payload }),
   listAutoSyncRuns: (limit = 20) => request("/api/auto_sync/runs", { params: { limit } }),

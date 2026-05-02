@@ -1,6 +1,8 @@
 import useTokenManager from '../hooks/useTokenManager'
+import usePermissionTest from '../hooks/usePermissionTest'
 import TokenCreateForm from './TokenCreateForm'
 import TokenTable from './TokenTable'
+import PermissionTestPanel from './PermissionTestPanel'
 
 function TokenManagerPanel({ onTokenActivated }) {
   const {
@@ -15,6 +17,8 @@ function TokenManagerPanel({ onTokenActivated }) {
     handleToggleEnabled,
     handleDelete,
   } = useTokenManager({ onTokenActivated })
+
+  const permTest = usePermissionTest()
 
   return (
     <div style={{ border: '1px solid #444', borderRadius: '10px', padding: '20px', maxWidth: '1040px', margin: '0 auto 30px auto', backgroundColor: '#15202b' }}>
@@ -40,6 +44,16 @@ function TokenManagerPanel({ onTokenActivated }) {
         onToggleEnabled={handleToggleEnabled}
         onDelete={handleDelete}
       />
+
+      <div style={{ marginTop: '30px' }}>
+        <PermissionTestPanel
+          testing={permTest.testing}
+          results={permTest.results}
+          error={permTest.error}
+          summary={permTest.summary}
+          onRunTest={permTest.runPermissionTest}
+        />
+      </div>
     </div>
   )
 }
