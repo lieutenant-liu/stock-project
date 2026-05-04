@@ -1,6 +1,12 @@
 import { useState } from 'react'
 
-const CATEGORIES = ['基础数据', '行情数据', '财务数据', '参考数据', '资金流向', '两融数据', '特色数据', '打板专题']
+const CATEGORIES = [
+  '基础数据', '行情数据', '财务数据', '参考数据', '资金流向',
+  '两融数据', '特色数据', '打板专题',
+  'ETF专题', '指数专题', '公募基金', '期货数据', '现货数据',
+  '期权数据', '债券专题', '外汇数据', '港股数据', '美股数据',
+  '宏观经济', '大模型语料', '财富管理',
+]
 
 const thStyle = { padding: '8px', border: '1px solid #324150', textAlign: 'left' }
 const tdStyle = { padding: '8px', border: '1px solid #324150' }
@@ -83,7 +89,7 @@ function PermissionTestPanel({ testing, results, error, summary, onRunTest }) {
     <div style={{ border: '1px solid #444', borderRadius: '10px', padding: '20px', backgroundColor: '#15202b' }}>
       <h3 style={{ marginTop: 0, color: '#4fc3f7' }}>Token 权限探测 — 全量接口扫描</h3>
       <p style={{ color: '#9aa4b2', marginTop: 0, marginBottom: '16px', fontSize: '0.9rem' }}>
-        测试当前 token 对 Tushare 官方 {CATEGORIES.length} 大类、50+ 个接口的访问权限，发现积分等级边界。
+        测试当前 token 对 Tushare 官方 {CATEGORIES.length} 大类、200+ 个接口的访问权限，发现积分等级边界。
       </p>
 
       <button
