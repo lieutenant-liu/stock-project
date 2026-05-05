@@ -1,0 +1,30 @@
+services:
+  backend:
+    build:
+      context: ./stock-backend
+      dockerfile: Dockerfile
+    environment:
+      - DB_PATH=/data/stocks.db
+    volumes:
+      - stock-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8081/api/tokens"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  frontend:
+    build:
+      context: ./stock-frontend
+      dockerfile: Dockerfile
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  stock-data:
+    driver: local

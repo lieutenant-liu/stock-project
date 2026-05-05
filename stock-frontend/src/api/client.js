@@ -1,8 +1,8 @@
-const API_BASE = `http://${window.location.hostname}:8081`;
+const API_BASE = '';
 
 function buildURL(path, params = {}) {
   // 统一 query 参数序列化，避免各模块重复拼接 URL。
-  const url = new URL(`${API_BASE}${path}`);
+  const url = new URL(`${API_BASE}${path}`, window.location.origin);
   Object.entries(params).forEach(([key, value]) => {
     if (value !== undefined && value !== null && value !== "") {
       url.searchParams.set(key, String(value));

@@ -2,10 +2,14 @@
 stock-backend/stocks.db
 stock-backend/stocks.db-shm
 stock-backend/stocks.db-wal
+stock-backend/stock-backend
 
 # stock-frontend dependencies and build output
 stock-frontend/node_modules/
 stock-frontend/dist/
+
+# Docker
+docker-compose.override.yml
 
 # common local files
 .env

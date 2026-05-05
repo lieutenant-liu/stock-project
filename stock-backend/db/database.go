@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os"
 
 	_ "modernc.org/sqlite"
 )
@@ -13,7 +14,12 @@ var DB *sql.DB
 func InitDB() {
 	var err error
 
-	DB, err = sql.Open("sqlite", "stocks.db")
+	dbPath := os.Getenv("DB_PATH")
+	if dbPath == "" {
+		dbPath = "stocks.db"
+	}
+
+	DB, err = sql.Open("sqlite", dbPath)
 	if err != nil {
 		log.Fatal("❌ 连接数据库失败: ", err)
 	}

@@ -1,0 +1,5 @@
+stocks.db
+stocks.db-shm
+stocks.db-wal
+stock-backend
+*.log

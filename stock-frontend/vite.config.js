@@ -16,6 +16,12 @@ export default defineConfig({
     strictPort: true,  // 强制使用 5173，被占用就报错，不自动跳端口
     watch: {
       usePolling: true // 解决部分 PRoot 环境下文件热更新失效的问题
+    },
+    proxy: {
+      '/api': {
+        target: 'http://localhost:8081',
+        changeOrigin: true,
+      }
     }
   }
 })
