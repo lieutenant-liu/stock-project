@@ -75,9 +75,15 @@ func main() {
 	startDynamicLighthouse()
 	feeder.InitGlobalEngine(800 * time.Millisecond)
 	registerRoutes()
-	fmt.Println("🟢 工业级全字段量化引擎启动完毕！监听端口: 8081")
+	registerStaticRoutes()
 
-	server := &http.Server{Addr: ":8081", Handler: nil}
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8081"
+	}
+	fmt.Printf("🟢 工业级全字段量化引擎启动完毕！监听端口: %s\n", port)
+
+	server := &http.Server{Addr: ":" + port, Handler: nil}
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
