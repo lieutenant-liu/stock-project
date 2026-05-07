@@ -79,6 +79,24 @@ func BatchInsertAdjFactors(tsCode string, factors []tushare.AdjFactor) int {
 	return insertCount
 }
 
+// GetTradingDays 获取区间内的所有交易日。
+func GetTradingDays(startDate, endDate string) []string {
+	var days []string
+	query := `SELECT cal_date FROM trade_calendar WHERE is_open = 1 AND cal_date >= ? AND cal_date <= ? ORDER BY cal_date ASC`
+	rows, err := DB.Query(query, startDate, endDate)
+	if err != nil {
+		return days
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var d string
+		if err := rows.Scan(&d); err == nil {
+			days = append(days, d)
+		}
+	}
+	return days
+}
+
 // GetAdjFactorsFromDB 从数据库提取复权因子。
 func GetAdjFactorsFromDB(tsCode string, startDate string, endDate string) []tushare.AdjFactor {
 	var factors []tushare.AdjFactor

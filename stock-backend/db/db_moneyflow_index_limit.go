@@ -207,6 +207,27 @@ func GetStkLimitFromDB(tsCode string, startDate string, endDate string) []tushar
 	return limits
 }
 
+// GetAllLimitsForDate 批量查询全市场某天的涨跌停价格。
+func GetAllLimitsForDate(date string) map[string]tushare.StkLimit {
+	result := make(map[string]tushare.StkLimit)
+	query := `SELECT ts_code, up_limit, down_limit FROM daily_stk_limit WHERE trade_date = ?`
+	rows, err := DB.Query(query, date)
+	if err != nil {
+		log.Println("批量查询涨跌停失败:", err)
+		return result
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var l tushare.StkLimit
+		l.TradeDate = date
+		if err := rows.Scan(&l.TSCode, &l.UpLimit, &l.DownLimit); err == nil {
+			result[l.TSCode] = l
+		}
+	}
+	return result
+}
+
 // GetLimitUpPremium 通过 K 线收盘价与涨停价联合透视计算溢价率。
 func GetLimitUpPremium(yesterday string, today string) (int, float64) {
 	query := `

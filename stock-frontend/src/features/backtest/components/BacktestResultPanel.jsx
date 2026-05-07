@@ -58,7 +58,7 @@ function BacktestResultPanel({ result }) {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
               <thead>
                 <tr style={{ borderBottom: '2px solid #444' }}>
-                  {['买入日期', '买入价', '卖出日期', '卖出价', '股数', '盈亏', '收益率', '持仓天数', '策略', '买入原因', '卖出原因'].map((h) => (
+                  {['股票代码', '买入日期', '买入价', '卖出日期', '卖出价', '股数', '盈亏', '收益率', '持仓天数', '策略', '买入原因', '卖出原因'].map((h) => (
                     <th key={h} style={{ padding: '8px 10px', textAlign: 'left', color: '#aaa', whiteSpace: 'nowrap' }}>{h}</th>
                   ))}
                 </tr>
@@ -68,6 +68,7 @@ function BacktestResultPanel({ result }) {
                   const pnlColor = t.pnl >= 0 ? '#ef232a' : '#14b143'
                   return (
                     <tr key={i} style={{ borderBottom: '1px solid #2a2a2a' }}>
+                      <td style={{ padding: '8px 10px', color: '#5470c6', fontWeight: 'bold', whiteSpace: 'nowrap' }}>{t.ts_code}</td>
                       <td style={{ padding: '8px 10px', color: '#ddd', whiteSpace: 'nowrap' }}>{t.buy_date}</td>
                       <td style={{ padding: '8px 10px', color: '#ddd' }}>{t.buy_price.toFixed(2)}</td>
                       <td style={{ padding: '8px 10px', color: '#ddd', whiteSpace: 'nowrap' }}>{t.sell_date}</td>

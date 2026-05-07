@@ -29,8 +29,8 @@ function BacktestConfigPanel({ config, setConfig, onRun, loading }) {
       <h3 style={{ margin: '0 0 16px 0', color: '#fff', fontSize: '1.1rem' }}>回测参数</h3>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '14px', alignItems: 'end' }}>
         <div style={fieldStyle}>
-          <label style={labelStyle}>股票代码</label>
-          <input style={inputStyle} value={config.ts_code} onChange={(e) => update('ts_code', e.target.value)} placeholder="600519" />
+          <label style={labelStyle}>扫描范围</label>
+          <div style={{ ...inputStyle, display: 'flex', alignItems: 'center', color: '#00d2ff', fontWeight: 'bold', cursor: 'default' }}>全市场</div>
         </div>
         <div style={fieldStyle}>
           <label style={labelStyle}>起始日期</label>

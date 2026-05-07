@@ -7,7 +7,6 @@ import { getDefaultDateRange } from '../utils/dateRange'
 const defaultRange = getDefaultDateRange()
 
 const defaultConfig = {
-  ts_code: '600519',
   start_date: defaultRange.start,
   end_date: defaultRange.end,
   initial_capital: 100000,
@@ -16,6 +15,7 @@ const defaultConfig = {
   use_ma120_stop: true,
   use_box_stop: true,
   commission: 0.001,
+  position_size_pct: 0.20,
 }
 
 function BacktestWorkspace() {
@@ -25,20 +25,22 @@ function BacktestWorkspace() {
   const [error, setError] = useState('')
 
   const runBacktest = async () => {
-    if (!config.ts_code.trim()) {
-      setError('请输入股票代码')
-      return
-    }
     setLoading(true)
     setError('')
     setResult(null)
 
     try {
       const payload = {
-        ...config,
-        ts_code: config.ts_code.trim(),
+        target_pool: [],
         start_date: config.start_date.replace(/-/g, ''),
         end_date: config.end_date.replace(/-/g, ''),
+        initial_capital: config.initial_capital,
+        strategy: config.strategy,
+        profit_take_pct: config.profit_take_pct,
+        use_ma120_stop: config.use_ma120_stop,
+        use_box_stop: config.use_box_stop,
+        commission: config.commission,
+        position_size_pct: config.position_size_pct,
       }
       const res = await api.runBacktest(payload)
       if (res.code === 200 && res.data) {

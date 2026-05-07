@@ -144,6 +144,80 @@ func BatchInsertStockBasic(basics []tushare.StockBasicInfo) int {
 	return insertCount
 }
 
+// GetAllKLinesForDate 批量查询全市场某天的前复权K线。
+// 返回 tsCode → DailyKLine 的 map，用于每日截面扫描。
+func GetAllKLinesForDate(date string) map[string]tushare.DailyKLine {
+	result := make(map[string]tushare.DailyKLine)
+	query := `
+		SELECT k.ts_code, k.trade_date,
+			k.open * f.adj_factor / latest.latest_adj,
+			k.high * f.adj_factor / latest.latest_adj,
+			k.low * f.adj_factor / latest.latest_adj,
+			k.close * f.adj_factor / latest.latest_adj,
+			k.vol, k.pct_chg
+		FROM daily_klines k
+		JOIN adj_factors f ON k.ts_code = f.ts_code AND k.trade_date = f.trade_date
+		JOIN (
+			SELECT ts_code, adj_factor AS latest_adj
+			FROM adj_factors
+			WHERE trade_date = (SELECT MAX(trade_date) FROM adj_factors WHERE trade_date <= ?)
+		) latest ON k.ts_code = latest.ts_code
+		WHERE k.trade_date = ? AND k.trust_level >= 0
+	`
+	rows, err := DB.Query(query, date, date)
+	if err != nil {
+		log.Println("批量查询日K线失败:", err)
+		return result
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var k tushare.DailyKLine
+		if err := rows.Scan(&k.TSCode, &k.TradeDate, &k.Open, &k.High, &k.Low, &k.Close, &k.Vol, &k.PctChg); err == nil {
+			result[k.TSCode] = k
+		}
+	}
+	return result
+}
+
+// GetKLinesWithAdj 查询单只股票的历史K线并前复权。
+// 用于持仓建仓时加载历史、候选股票分析时加载窗口。
+func GetKLinesWithAdj(tsCode string, startDate string, endDate string) []tushare.DailyKLine {
+	var klines []tushare.DailyKLine
+	query := `
+		SELECT k.trade_date,
+			k.open * f.adj_factor / latest.latest_adj,
+			k.high * f.adj_factor / latest.latest_adj,
+			k.low * f.adj_factor / latest.latest_adj,
+			k.close * f.adj_factor / latest.latest_adj,
+			k.vol, k.pct_chg
+		FROM daily_klines k
+		JOIN adj_factors f ON k.ts_code = f.ts_code AND k.trade_date = f.trade_date
+		JOIN (
+			SELECT ts_code, adj_factor AS latest_adj
+			FROM adj_factors
+			WHERE ts_code = ? AND trade_date = (SELECT MAX(trade_date) FROM adj_factors WHERE ts_code = ? AND trade_date <= ?)
+		) latest ON k.ts_code = latest.ts_code
+		WHERE k.ts_code = ? AND k.trade_date >= ? AND k.trade_date <= ? AND k.trust_level >= 0
+		ORDER BY k.trade_date ASC
+	`
+	rows, err := DB.Query(query, tsCode, tsCode, endDate, tsCode, startDate, endDate)
+	if err != nil {
+		log.Println("查询复权K线失败:", err)
+		return klines
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var k tushare.DailyKLine
+		k.TSCode = tsCode
+		if err := rows.Scan(&k.TradeDate, &k.Open, &k.High, &k.Low, &k.Close, &k.Vol, &k.PctChg); err == nil {
+			klines = append(klines, k)
+		}
+	}
+	return klines
+}
+
 // GetAllStockCodes 从数据库提取全市场股票代码。
 func GetAllStockCodes() []string {
 	var codes []string
