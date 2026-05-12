@@ -54,6 +54,20 @@ type EquityPoint struct {
 	Value float64 `json:"value"`
 }
 
+// TheoreticalTrade Phase 1 产出的理论交易信号。
+// 包含持仓期间每日收盘价，供 Phase 2 做逐日盯市。
+type TheoreticalTrade struct {
+	Code          string             `json:"code"`
+	BuyDate       string             `json:"buy_date"`
+	BuyPrice      float64            `json:"buy_price"`
+	SellDate      string             `json:"sell_date"`
+	SellPrice     float64            `json:"sell_price"`
+	Strategy      string             `json:"strategy"`
+	BuyReason     string             `json:"buy_reason"`
+	SellReason    string             `json:"sell_reason"`
+	HoldingPrices map[string]float64 `json:"-"` // trade_date → Close，仅持仓期间
+}
+
 // position 当前持仓（引擎内部）。
 type position struct {
 	TSCode    string

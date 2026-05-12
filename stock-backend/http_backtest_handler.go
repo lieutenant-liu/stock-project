@@ -41,7 +41,7 @@ func BacktestHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := backtest.Run(cfg)
+	result, err := backtest.RunV2(cfg)
 	if err != nil {
 		respondBadRequest(w, err.Error())
 		return

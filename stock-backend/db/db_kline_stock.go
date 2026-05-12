@@ -218,6 +218,32 @@ func GetKLinesWithAdj(tsCode string, startDate string, endDate string) []tushare
 	return klines
 }
 
+// GetIndexDailyForBacktest 批量加载大盘指数数据用于宏观风控预计算。
+func GetIndexDailyForBacktest(tsCode, startDate, endDate string) []tushare.IndexDaily {
+	var indices []tushare.IndexDaily
+	query := `
+		SELECT trade_date, close, vol, pct_chg
+		FROM index_daily
+		WHERE ts_code = ? AND trade_date >= ? AND trade_date <= ?
+		ORDER BY trade_date ASC
+	`
+	rows, err := DB.Query(query, tsCode, startDate, endDate)
+	if err != nil {
+		log.Println("查询大盘指数失败:", err)
+		return indices
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var idx tushare.IndexDaily
+		idx.TSCode = tsCode
+		if err := rows.Scan(&idx.TradeDate, &idx.Close, &idx.Vol, &idx.PctChg); err == nil {
+			indices = append(indices, idx)
+		}
+	}
+	return indices
+}
+
 // GetAllStockCodes 从数据库提取全市场股票代码。
 func GetAllStockCodes() []string {
 	var codes []string
