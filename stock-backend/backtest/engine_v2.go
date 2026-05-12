@@ -60,6 +60,8 @@ func RunV2(cfg BacktestConfig) (*BacktestResult, error) {
 // Phase 1: Signal Mining（按股票遍历）
 // ─────────────────────────────────────────────
 
+const chunkSize = 100
+
 func phase1SignalMining(cfg BacktestConfig) []TheoreticalTrade {
 	analyzers := selectAnalyzers(cfg.Strategy)
 	lookbackStart := subtractDays(cfg.StartDate, 300)
@@ -69,35 +71,48 @@ func phase1SignalMining(cfg BacktestConfig) []TheoreticalTrade {
 	isBullMarket := buildMarketRegimeMap(indexData)
 	log.Printf("[回测V2] 大盘数据 %d 天, 牛市日 %d 天", len(indexData), countTrue(isBullMarket))
 
-	// 2. 按股票遍历
+	// 2. 分块批量加载 + 纯内存策略运算
 	var signals []TheoreticalTrade
 	total := len(cfg.TargetPool)
+	processed := 0
 
-	for idx, code := range cfg.TargetPool {
-		if (idx+1)%500 == 0 || idx+1 == total {
-			log.Printf("[回测V2] 信号开采进度 %d/%d | 信号=%d 笔", idx+1, total, len(signals))
+	for i := 0; i < total; i += chunkSize {
+		end := i + chunkSize
+		if end > total {
+			end = total
+		}
+		chunk := cfg.TargetPool[i:end]
+
+		// 4 条批量 SQL（代替 400 条单股查询）
+		klinesMap := db.BatchGetKLinesWithAdj(chunk, lookbackStart, cfg.EndDate)
+		fundsMap := db.BatchGetFundamentals(chunk, lookbackStart, cfg.EndDate)
+		flowsMap := db.BatchGetMoneyFlow(chunk, lookbackStart, cfg.EndDate)
+		limitsMap := db.BatchGetStkLimit(chunk, lookbackStart, cfg.EndDate)
+
+		// 纯内存策略运算
+		for _, code := range chunk {
+			klines := klinesMap[code]
+			if len(klines) < 130 {
+				continue
+			}
+
+			funds := fundsMap[code]
+			flows := flowsMap[code]
+			limits := limitsMap[code]
+
+			limitMap := make(map[string]tushare.StkLimit, len(limits))
+			for _, l := range limits {
+				limitMap[l.TradeDate] = l
+			}
+
+			trades := mineStockSignals(code, klines, funds, flows, limitMap, cfg, analyzers, isBullMarket)
+			signals = append(signals, trades...)
 		}
 
-		// 单股内存闭环：4次DB查询
-		klines := db.GetKLinesWithAdj(code, lookbackStart, cfg.EndDate)
-		if len(klines) < 130 {
-			continue
-		}
+		processed += len(chunk)
+		log.Printf("[回测V2] 信号开采进度 %d/%d | 信号=%d 笔", processed, total, len(signals))
 
-		funds := db.GetFundamentalsFromDB(code, lookbackStart, cfg.EndDate)
-		flows := db.GetMoneyFlowFromDB(code, lookbackStart, cfg.EndDate)
-		limits := db.GetStkLimitFromDB(code, lookbackStart, cfg.EndDate)
-
-		limitMap := make(map[string]tushare.StkLimit, len(limits))
-		for _, l := range limits {
-			limitMap[l.TradeDate] = l
-		}
-
-		// 内层循环：模拟该股时间推移，产出理论交易
-		trades := mineStockSignals(code, klines, funds, flows, limitMap, cfg, analyzers, isBullMarket)
-		signals = append(signals, trades...)
-
-		// klines/funds/flows/limits 在此作用域结束，GC 可回收
+		// klinesMap/fundsMap/flowsMap/limitsMap 在此作用域结束，GC 可回收
 	}
 
 	return signals
