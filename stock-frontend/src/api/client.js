@@ -63,6 +63,14 @@ const api = {
   addPosition: (payload) => request("/api/position/add", { method: "POST", body: payload }),
   deletePosition: (payload) => request("/api/position/delete", { method: "POST", body: payload }),
   runBacktest: (payload) => request("/api/backtest", { method: "POST", body: payload }),
+  downloadBacktestCSV: () => {
+    const link = document.createElement('a')
+    link.href = '/api/backtest/download'
+    link.download = ''
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  },
 };
 
 export default api;

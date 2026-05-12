@@ -20,6 +20,7 @@ func registerRoutes() {
 	http.HandleFunc("/api/tokens/activate", tokenActivateHandler)
 	http.HandleFunc("/api/tokens/test_permissions", tokenPermissionTestHandler)
 	http.HandleFunc("/api/backtest", BacktestHandler)
+	http.HandleFunc("/api/backtest/download", BacktestDownloadHandler)
 	http.HandleFunc("/api/auto_sync/config", autoSyncConfigHandler)
 	http.HandleFunc("/api/auto_sync/runs", autoSyncRunsHandler)
 	http.HandleFunc("/api/auto_sync/run_now", autoSyncRunNowHandler)

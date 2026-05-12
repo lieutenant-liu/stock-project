@@ -11,6 +11,9 @@ stock-frontend/dist/
 # Docker
 docker-compose.override.yml
 
+# backtest exports
+stock-backend/exports/
+
 # common local files
 .env
 *.log

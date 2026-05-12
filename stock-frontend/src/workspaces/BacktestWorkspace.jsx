@@ -57,7 +57,7 @@ function BacktestWorkspace() {
 
   return (
     <>
-      <BacktestConfigPanel config={config} setConfig={setConfig} onRun={runBacktest} loading={loading} />
+      <BacktestConfigPanel config={config} setConfig={setConfig} onRun={runBacktest} loading={loading} result={result} />
       {error && (
         <div style={{ padding: '12px 16px', backgroundColor: '#2a1a1a', border: '1px solid #ef232a', borderRadius: '8px', color: '#ef232a', marginBottom: '14px' }}>
           {error}

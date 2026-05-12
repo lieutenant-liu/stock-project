@@ -21,8 +21,17 @@ const fieldStyle = {
   minWidth: '140px',
 }
 
-function BacktestConfigPanel({ config, setConfig, onRun, loading }) {
+function BacktestConfigPanel({ config, setConfig, onRun, loading, result }) {
   const update = (key, value) => setConfig((prev) => ({ ...prev, [key]: value }))
+
+  const onExport = () => {
+    const link = document.createElement('a')
+    link.href = '/api/backtest/download'
+    link.download = ''
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  }
 
   return (
     <section style={{ backgroundColor: '#1e1e2e', border: '1px solid #333', borderRadius: '10px', padding: '20px', marginBottom: '14px' }}>
@@ -89,6 +98,22 @@ function BacktestConfigPanel({ config, setConfig, onRun, loading }) {
           }}
         >
           {loading ? '回测中...' : '开始回测'}
+        </button>
+        <button
+          onClick={onExport}
+          disabled={!result}
+          style={{
+            backgroundColor: !result ? '#333' : '#14b143',
+            color: !result ? '#666' : '#fff',
+            border: 'none',
+            padding: '10px 28px',
+            borderRadius: '6px',
+            cursor: !result ? 'not-allowed' : 'pointer',
+            fontSize: '1rem',
+            fontWeight: 'bold',
+          }}
+        >
+          导出回测报表 (CSV)
         </button>
       </div>
     </section>
