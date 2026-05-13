@@ -614,6 +614,11 @@ func buildLiveStrategyMeta(strategyName string, klines []tushare.DailyKLine, buy
 			meta["box_lower"] = boxLower
 			meta["atr14"] = strategy.CalcATR(klines[:buyIdx+1], 14)
 		}
+
+	case strings.Contains(strategyName, "PBMA"):
+		if buyIdx >= 14 {
+			meta["buy_atr"] = strategy.CalcATR(klines[:buyIdx+1], 14)
+		}
 	}
 	return meta
 }

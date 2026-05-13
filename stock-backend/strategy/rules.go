@@ -623,6 +623,7 @@ func GetActiveAnalyzers() []Analyzer {
 	return []Analyzer{
 		&MACBAnalyzer{}, // 均线收敛 (策略一)
 		&CBBMAnalyzer{}, // 中枢强势突破 (策略二，替换原 BBLU)
+		&PBMAAnalyzer{}, // 缩量回踩狙击 (策略四)
 		// &DSSAnalyzer{},  // ⚠️ 深海动量 (策略三，存在重大问题，暂时下线)
 	}
 }

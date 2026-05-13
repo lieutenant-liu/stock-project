@@ -389,6 +389,12 @@ func buildStrategyMeta(strategyName string, buyResult strategy.DiagnoseResult, k
 			meta["box_lower"] = boxLower
 			meta["atr14"] = strategy.CalcATR(klines[:signalIdx+1], 14)
 		}
+
+	case strings.Contains(strategyName, "PBMA"):
+		// PBMA 需要 buyATR 用于两阶段 ATR 动态止损
+		if signalIdx >= 14 {
+			meta["buy_atr"] = strategy.CalcATR(klines[:signalIdx+1], 14)
+		}
 	}
 	// MACB 无需额外 meta，其 EvaluateHold 仅依赖动态计算的 MA
 	return meta
