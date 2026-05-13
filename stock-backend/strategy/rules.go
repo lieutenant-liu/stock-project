@@ -429,14 +429,13 @@ func (d *DSSAnalyzer) EvaluateHold(pos *Position, today tushare.DailyKLine, hist
 
 // CheckMarketEnvironment 评估大盘环境与短线情绪。
 // 返回 (是否安全, 是否强势市场, 诊断报告)。
-// 强势市场 = 连续 2 个交易日 Close > MA20（轻量级极速过滤）。
+// 强势市场 = 大盘今日 Close > 大盘 MA60（极简单均线过滤）。
 func CheckMarketEnvironment(indices []tushare.IndexDaily, limitUpCount int, avgPremium float64) (bool, bool, string) {
 	if len(indices) < 25 {
 		return true, true, "大盘数据不足，全局风控默认放行。"
 	}
 
 	today := indices[len(indices)-1]
-	n := len(indices)
 
 	// 1. 暴跌风控：大盘单日暴跌
 	if today.PctChg <= -1.5 {
@@ -444,10 +443,19 @@ func CheckMarketEnvironment(indices []tushare.IndexDaily, limitUpCount int, avgP
 	}
 
 	// 2. 趋势风控：大盘跌破 20日线且向下拐头
-	ma20 := CalcMAFromData(indices, 20)
+	var sum20, sumPrev20 float64
+	n := len(indices)
+	for i := n - 20; i < n; i++ {
+		sum20 += indices[i].Close
+	}
+	for i := n - 21; i < n-1; i++ {
+		sumPrev20 += indices[i].Close
+	}
+	ma20 := sum20 / 20.0
+	prevMa20 := sumPrev20 / 20.0
 
-	if today.Close < ma20 {
-		return false, false, "⚠️ 全局风控：上证指数跌破 MA20，短线趋势走弱，暂停突破买入！"
+	if today.Close < ma20 && ma20 < prevMa20 {
+		return false, false, "⚠️ 全局风控：上证指数跌破 20日线 且趋势向下，处于单边空头区间，暂停突破买入！"
 	}
 
 	// =========================================================
@@ -462,14 +470,14 @@ func CheckMarketEnvironment(indices []tushare.IndexDaily, limitUpCount int, avgP
 	}
 
 	// =========================================================
-	// 4. 强弱市场判断：连续 2 日站稳 MA20
+	// 4. 强弱市场判断：Close > MA60
 	// =========================================================
 	strong := true
-	if n >= 22 {
-		// 连续 2 个交易日 Close > MA20
-		ma20Today := ma20
-		ma20Yesterday := CalcMAFromData(indices[:n-1], 20)
-		strong = today.Close > ma20Today && indices[n-2].Close > ma20Yesterday
+	if len(indices) >= 60 {
+		ma60 := CalcMAFromData(indices, 60)
+		if ma60 > 0 && today.Close < ma60 {
+			strong = false
+		}
 	}
 
 	premiumMsg := "情绪数据暂缺"

@@ -697,38 +697,34 @@ func countTrue(m map[string]bool) int {
 }
 
 // buildStrongMarketMap 构建大盘强弱 map。
-// 对齐实盘 CheckMarketEnvironment：连续 2 日 Close > MA20 即为强势。
+// 对齐实盘 CheckMarketEnvironment：Close >= MA60 即为强势。
 // true = 强势市场（允许右侧突破策略 MACB/CBBM），false = 弱势市场（仅允许左侧策略 DSS）。
 func buildStrongMarketMap(indexData []tushare.IndexDaily) map[string]bool {
 	n := len(indexData)
 	result := make(map[string]bool, n)
 
-	// 预计算 MA20 数组
-	ma20Arr := make([]float64, n)
+	// 预计算 MA60 数组
+	ma60Arr := make([]float64, n)
 	for i := 0; i < n; i++ {
-		if i >= 19 {
+		if i >= 59 {
 			sum := 0.0
-			for j := i - 19; j <= i; j++ {
+			for j := i - 59; j <= i; j++ {
 				sum += indexData[j].Close
 			}
-			ma20Arr[i] = sum / 20.0
+			ma60Arr[i] = sum / 60.0
 		}
 	}
 
 	for i := 0; i < n; i++ {
 		date := indexData[i].TradeDate
 
-		// 数据不足 21 天，默认视为强势（不阻拦）
-		if i < 20 {
+		// 数据不足 60 天，默认视为强势（不阻拦）
+		if i < 59 {
 			result[date] = true
 			continue
 		}
 
-		// 连续 2 日 Close > MA20
-		strong := indexData[i].Close > ma20Arr[i] &&
-			indexData[i-1].Close > ma20Arr[i-1]
-
-		result[date] = strong
+		result[date] = indexData[i].Close >= ma60Arr[i]
 	}
 
 	return result
