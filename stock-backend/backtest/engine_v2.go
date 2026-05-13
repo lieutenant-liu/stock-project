@@ -697,17 +697,13 @@ func countTrue(m map[string]bool) int {
 }
 
 // buildStrongMarketMap 构建大盘强弱 map。
-// 对齐实盘 CheckMarketEnvironment 的三重防伪验证：
-// 1. 均线多头排列：Close > MA60 且 MA20 > MA60
-// 2. 均线斜率向上：MA60[i] >= MA60[i-3]
-// 3. 时间确认：连续 3 天 Close > MA60
+// 对齐实盘 CheckMarketEnvironment：连续 2 日 Close > MA20 即为强势。
 // true = 强势市场（允许右侧突破策略 MACB/CBBM），false = 弱势市场（仅允许左侧策略 DSS）。
 func buildStrongMarketMap(indexData []tushare.IndexDaily) map[string]bool {
 	n := len(indexData)
 	result := make(map[string]bool, n)
 
-	// 预计算 MA60 和 MA20 数组，避免 O(n*60) 重复计算
-	ma60Arr := make([]float64, n)
+	// 预计算 MA20 数组
 	ma20Arr := make([]float64, n)
 	for i := 0; i < n; i++ {
 		if i >= 19 {
@@ -717,39 +713,22 @@ func buildStrongMarketMap(indexData []tushare.IndexDaily) map[string]bool {
 			}
 			ma20Arr[i] = sum / 20.0
 		}
-		if i >= 59 {
-			sum := 0.0
-			for j := i - 59; j <= i; j++ {
-				sum += indexData[j].Close
-			}
-			ma60Arr[i] = sum / 60.0
-		}
 	}
 
 	for i := 0; i < n; i++ {
 		date := indexData[i].TradeDate
 
-		// 数据不足 63 天，默认视为强势（不阻拦）
-		if i < 62 {
+		// 数据不足 21 天，默认视为强势（不阻拦）
+		if i < 20 {
 			result[date] = true
 			continue
 		}
 
-		ma60 := ma60Arr[i]
-		ma20 := ma20Arr[i]
+		// 连续 2 日 Close > MA20
+		strong := indexData[i].Close > ma20Arr[i] &&
+			indexData[i-1].Close > ma20Arr[i-1]
 
-		// 条件1：均线多头排列 — Close > MA60 且 MA20 > MA60
-		cond1 := indexData[i].Close > ma60 && ma20 > ma60
-
-		// 条件2：均线斜率向上 — MA60[i] >= MA60[i-3]
-		cond2 := ma60 >= ma60Arr[i-3]
-
-		// 条件3：时间确认 — 连续 3 天 Close > MA60
-		cond3 := indexData[i].Close > ma60 &&
-			indexData[i-1].Close > ma60Arr[i-1] &&
-			indexData[i-2].Close > ma60Arr[i-2]
-
-		result[date] = cond1 && cond2 && cond3
+		result[date] = strong
 	}
 
 	return result
