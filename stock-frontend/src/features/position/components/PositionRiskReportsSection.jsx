@@ -36,23 +36,35 @@ function PositionRiskReportsSection({
                   </div>
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', backgroundColor: '#111', padding: '10px', borderRadius: '6px', marginBottom: '15px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px', backgroundColor: '#111', padding: '10px', borderRadius: '6px', marginBottom: '15px' }}>
                   <div style={{ textAlign: 'left' }}>
                     <div style={{ color: '#666', fontSize: '0.8rem' }}>成本价</div>
                     <div style={{ color: '#fff', fontWeight: 'bold' }}>{formatPrice(pos.cost_price)}</div>
                   </div>
-                  <div style={{ textAlign: 'right' }}>
+                  <div style={{ textAlign: 'center' }}>
                     <div style={{ color: '#666', fontSize: '0.8rem' }}>现价 (收盘)</div>
                     <div style={{ color: '#fff', fontWeight: 'bold' }}>{formatPrice(pos.current_price)}</div>
                   </div>
-                  <div style={{ textAlign: 'left' }}>
+                  <div style={{ textAlign: 'right' }}>
                     <div style={{ color: '#666', fontSize: '0.8rem' }}>动态高水位</div>
                     <div style={{ color: '#00d2ff', fontWeight: 'bold' }}>{formatPrice(pos.high_watermark)}</div>
                   </div>
-                  <div style={{ textAlign: 'right' }}>
+                  <div style={{ textAlign: 'left' }}>
                     <div style={{ color: '#666', fontSize: '0.8rem' }}>盈亏比例</div>
                     <div style={{ color: typeof pos.profit_pct === 'number' && pos.profit_pct >= 0 ? '#14b143' : '#ef232a', fontWeight: 'bold' }}>
                       {formatPercent(pos.profit_pct)}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'center' }}>
+                    <div style={{ color: '#666', fontSize: '0.8rem' }}>最大浮盈</div>
+                    <div style={{ color: typeof pos.max_gain_pct === 'number' && pos.max_gain_pct >= 15 ? '#14b143' : '#888', fontWeight: 'bold' }}>
+                      {formatPercent(pos.max_gain_pct)}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ color: '#666', fontSize: '0.8rem' }}>止损阶段</div>
+                    <div style={{ color: pos.stage === 'B' ? '#00d2ff' : '#faad14', fontWeight: 'bold' }}>
+                      {pos.stage === 'B' ? 'B 锁定' : 'A 缓冲'}
                     </div>
                   </div>
                   <div style={{ textAlign: 'left', gridColumn: '1 / -1', borderTop: '1px dashed #333', paddingTop: '6px' }}>

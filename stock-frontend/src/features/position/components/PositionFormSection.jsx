@@ -21,6 +21,14 @@ function PositionFormSection({ posForm, setPosForm, handleAddPosition }) {
         <span style={{ color: '#ff8888', fontSize: '0.85rem', marginBottom: '5px' }}>建仓日期 (必填)</span>
         <input type="date" value={posForm.buy_date} onChange={(e) => setPosForm({ ...posForm, buy_date: e.target.value })} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #773333', backgroundColor: '#111', color: '#fff' }} />
       </div>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+        <span style={{ color: '#ff8888', fontSize: '0.85rem', marginBottom: '5px' }}>建仓策略 (选填)</span>
+        <select value={posForm.strategy || ''} onChange={(e) => setPosForm({ ...posForm, strategy: e.target.value })} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #773333', backgroundColor: '#111', color: '#fff', minWidth: '140px' }}>
+          <option value="">未关联</option>
+          <option value="MACB 均线收敛突破 (MACB)">MACB 均线收敛</option>
+          <option value="CBBM 中枢强势突破 (CBBM)">CBBM 中枢突破</option>
+        </select>
+      </div>
       <button onClick={handleAddPosition} style={{ padding: '9px 20px', backgroundColor: '#e01f54', color: '#fff', border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer', boxShadow: '0 2px 8px rgba(224,31,84,0.4)' }}>
         ➕ 添加持仓
       </button>

@@ -14,7 +14,7 @@ import (
 
 var (
 	baseDelay   time.Duration
-	delayMutex  sync.RWMutex // 💥 新增：保护动态射速的并发锁
+	delayMutex  sync.RWMutex // 💥 新增：保护动态请求频率的并发锁
 	limiterOnce sync.Once
 	sinkChan    chan SinkTask
 )
@@ -43,12 +43,12 @@ func SetBaseDelay(delayMs int) {
 	delayMutex.Lock()
 	defer delayMutex.Unlock()
 	baseDelay = time.Duration(delayMs) * time.Millisecond
-	LogMsg("🛡️ [系统引擎] 仿生学漏桶射速已热更新为: %d 毫秒/发！", delayMs)
+	LogMsg("🛡️ [系统引擎] 仿生学漏桶请求频率已热更新为: %d 毫秒/发！", delayMs)
 }
 
 // WaitToken 仿生学阻塞：带并发安全锁的动态延迟
 func WaitToken() {
-	// 安全读取当前射速
+	// 安全读取当前请求频率
 	delayMutex.RLock()
 	currentDelay := baseDelay
 	delayMutex.RUnlock()
@@ -103,6 +103,14 @@ func dataSinkWorker() {
 		case "stklimit":
 			if limits, ok := task.Data.([]tushare.StkLimit); ok {
 				saved = db.BatchInsertStkLimit(limits)
+			}
+		case "cyqperf":
+			if perfs, ok := task.Data.([]tushare.CyqPerf); ok {
+				saved = db.BatchInsertCyqPerf(task.TSCode, perfs)
+			}
+		case "stkfactorpro":
+			if factors, ok := task.Data.([]tushare.StkFactorPro); ok {
+				saved = db.BatchInsertStkFactorPro(task.TSCode, factors)
 			}
 
 		}

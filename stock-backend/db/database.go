@@ -84,7 +84,7 @@ func InitDB() {
 		pre_close REAL,              -- 💥 修复：补回昨收
 		change REAL,                 -- 💥 修复：补回涨跌额
 		pct_chg REAL,
-		data_source TEXT NOT NULL,   -- 血缘标记
+		data_source TEXT NOT NULL,   -- 数据源标记
 		trust_level INTEGER NOT NULL,-- 权重等级
 		PRIMARY KEY (ts_code, trade_date)
 	) WITHOUT ROWID;
@@ -96,7 +96,7 @@ func InitDB() {
 		ts_code TEXT NOT NULL,
 		trade_date TEXT NOT NULL,
 		adj_factor REAL NOT NULL,
-		data_source TEXT NOT NULL,   -- 💥 血缘追踪
+		data_source TEXT NOT NULL,   -- 💥 数据溯源
 		trust_level INTEGER NOT NULL,-- 💥 权重等级
 		PRIMARY KEY (ts_code, trade_date)
 	) WITHOUT ROWID;`
@@ -111,7 +111,7 @@ func InitDB() {
 		total_mv REAL,
 		dv_ratio REAL,
 		turnover_rate REAL,
-		data_source TEXT NOT NULL,   -- 💥 新增: 血缘标记
+		data_source TEXT NOT NULL,   -- 💥 新增: 数据源标记
 		trust_level INTEGER NOT NULL,-- 💥 新增: 权重等级
 		PRIMARY KEY (ts_code, trade_date)
 	) WITHOUT ROWID;`
@@ -126,13 +126,13 @@ func InitDB() {
 		roe REAL,                    
 		netprofit_yoy REAL,          
 		cfps REAL,                   
-		data_source TEXT NOT NULL,   -- 💥 新增: 血缘标记
+		data_source TEXT NOT NULL,   -- 💥 新增: 数据源标记
 		trust_level INTEGER NOT NULL,-- 💥 新增: 权重等级
 		PRIMARY KEY (ts_code, end_date)
 	) WITHOUT ROWID;
 	CREATE INDEX IF NOT EXISTS idx_fina_ann_date ON fina_indicators(ann_date);`
 
-	// 7. 大单资金流向表 (透视主力底牌)
+	// 7. 大单资金流向表 (资金流向追踪)
 	createMoneyFlowTable := `
 	CREATE TABLE IF NOT EXISTS daily_moneyflow (
 		ts_code TEXT NOT NULL,
@@ -142,7 +142,7 @@ func InitDB() {
 		buy_elg_vol REAL,
 		sell_elg_vol REAL,
 		net_mf_vol REAL,
-		data_source TEXT NOT NULL,   -- 💥 新增: 血缘标记
+		data_source TEXT NOT NULL,   -- 💥 新增: 数据源标记
 		trust_level INTEGER NOT NULL,-- 💥 新增: 权重等级
 		PRIMARY KEY (ts_code, trade_date)
 	) WITHOUT ROWID;`
@@ -159,7 +159,7 @@ func InitDB() {
 		PRIMARY KEY (trade_date, ts_code)
 	) WITHOUT ROWID;`
 
-	// 9. 大盘指数表 (系统风控雷达)
+	// 9. 大盘指数表 (系统风控数据源)
 	createIndexTable := `
 	CREATE TABLE IF NOT EXISTS index_daily (
 		ts_code TEXT NOT NULL,
@@ -167,7 +167,7 @@ func InitDB() {
 		close REAL NOT NULL,
 		vol REAL NOT NULL,
 		pct_chg REAL NOT NULL,
-		data_source TEXT NOT NULL,   -- 💥 新增: 血缘标记
+		data_source TEXT NOT NULL,   -- 💥 新增: 数据源标记
 		trust_level INTEGER NOT NULL,-- 💥 新增: 权重等级
 		PRIMARY KEY (ts_code, trade_date)
 	) WITHOUT ROWID;`
@@ -282,7 +282,56 @@ func InitDB() {
 	);
 	CREATE INDEX IF NOT EXISTS idx_email_recipients_enabled ON email_recipients(enabled);`
 
-	// 💥 黎明扫荡：物理销毁旧时代的打卡本！
+	// 17. 筹码分布数据 (cyq_perf)
+	createCyqPerfTable := `
+	CREATE TABLE IF NOT EXISTS cyq_perf_data (
+		ts_code     TEXT NOT NULL,
+		trade_date  TEXT NOT NULL,
+		profit_pct  REAL NOT NULL DEFAULT 0,
+		winner_rate REAL NOT NULL DEFAULT 0,
+		cost_5pct   REAL NOT NULL DEFAULT 0,
+		cost_15pct  REAL NOT NULL DEFAULT 0,
+		cost_50pct  REAL NOT NULL DEFAULT 0,
+		cost_85pct  REAL NOT NULL DEFAULT 0,
+		weight_avg  REAL NOT NULL DEFAULT 0,
+		his_low     REAL NOT NULL DEFAULT 0,
+		his_high    REAL NOT NULL DEFAULT 0,
+		data_source TEXT NOT NULL DEFAULT '',
+		trust_level INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY (ts_code, trade_date)
+	) WITHOUT ROWID;
+	CREATE INDEX IF NOT EXISTS idx_cyq_perf_trade_date ON cyq_perf_data(trade_date);`
+
+	// 18. 技术因子专业版 (stk_factor_pro)
+	createStkFactorProTable := `
+	CREATE TABLE IF NOT EXISTS stk_factor_pro_data (
+		ts_code     TEXT NOT NULL,
+		trade_date  TEXT NOT NULL,
+		macd        REAL NOT NULL DEFAULT 0,
+		macd_signal REAL NOT NULL DEFAULT 0,
+		macd_hist   REAL NOT NULL DEFAULT 0,
+		rsi_6       REAL NOT NULL DEFAULT 0,
+		rsi_12      REAL NOT NULL DEFAULT 0,
+		kdj_k       REAL NOT NULL DEFAULT 0,
+		kdj_d       REAL NOT NULL DEFAULT 0,
+		kdj_j       REAL NOT NULL DEFAULT 0,
+		boll_upper  REAL NOT NULL DEFAULT 0,
+		boll_lower  REAL NOT NULL DEFAULT 0,
+		data_source TEXT NOT NULL DEFAULT '',
+		trust_level INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY (ts_code, trade_date)
+	) WITHOUT ROWID;
+	CREATE INDEX IF NOT EXISTS idx_stk_factor_pro_trade_date ON stk_factor_pro_data(trade_date);`
+
+	// 19. 系统配置（单行模式）
+	createSystemConfigTable := `
+	CREATE TABLE IF NOT EXISTS system_config (
+		id INTEGER PRIMARY KEY CHECK (id = 1),
+		enable_pro_data INTEGER NOT NULL DEFAULT 0,
+		updated_at TEXT NOT NULL
+	);`
+
+	// 清理旧表：销毁过时的打卡本！
 	DB.Exec(`DROP TABLE IF EXISTS sync_history;`)
 	DB.Exec(`DROP TABLE IF EXISTS sync_history_fund;`)
 	DB.Exec(`DROP TABLE IF EXISTS daily_limit_list;`) // 👈 炸毁旧的高阶表
@@ -295,18 +344,21 @@ func InitDB() {
 		createAPITokenTable, createAutoSyncConfigTable, createAutoSyncRunsTable,
 		createAutoSyncRunStepsTable,
 		createEmailNotifyConfigTable, createEmailRecipientsTable,
+		createCyqPerfTable, createStkFactorProTable, createSystemConfigTable,
 	}
 	for _, sqlStr := range tables {
 		if _, err = DB.Exec(sqlStr); err != nil {
 			log.Fatal("❌ 创建 V2 数据表失败: ", err, "\nSQL:", sqlStr)
 		}
 	}
-	// ... 上面是原有的批量建表 for 循环 ...
+
+	// Migration: my_positions 新增 strategy 列（已存在的数据库自动补齐）
+	DB.Exec(`ALTER TABLE my_positions ADD COLUMN strategy TEXT NOT NULL DEFAULT ''`)
 
 	// 💥 修复：释放 WAL 读写并发能力
-	DB.SetMaxOpenConns(4) // 允许 4 个并发连接 (1个给后台静默写入，3个给前端雷达查询)
+	DB.SetMaxOpenConns(4) // 允许 4 个并发连接 (1个给后台静默写入，3个给前端查询)
 	DB.SetMaxIdleConns(2) // 保持适度的长连接池，防止 Termux 频繁创建/销毁套接字资源耗尽
 
-	fmt.Println("🔥 [黎明扫荡] 旧时代打卡本已被焚毁，进入精确对账时代！")
+	fmt.Println("[数据清理] 旧时代打卡本已被清除，进入精确对账时代！")
 	fmt.Println("🗄️ [数据中心] 究极形态：V2.0 六大核心数据表部署完毕！")
 }

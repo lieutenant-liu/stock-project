@@ -6,7 +6,7 @@ import (
 	"stock-backend/tushare"
 )
 
-// BatchInsertFundamentals 带有血缘权重的智能基本面入库。
+// BatchInsertFundamentals 带有数据源权重的智能基本面入库。
 func BatchInsertFundamentals(tsCode string, fundamentals []tushare.DailyFundamental) int {
 	if len(fundamentals) == 0 {
 		return 0
@@ -33,7 +33,7 @@ func BatchInsertFundamentals(tsCode string, fundamentals []tushare.DailyFundamen
 		WHERE excluded.trust_level >= daily_fundamentals.trust_level
 	`)
 	if err != nil {
-		log.Println("预编译基本面带血缘SQL失败:", err)
+		log.Println("预编译基本面带数据源SQL失败:", err)
 		_ = tx.Rollback()
 		return 0
 	}

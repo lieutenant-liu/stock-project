@@ -22,6 +22,7 @@ function PositionListSection({ deployedPositions, handleDeletePosition }) {
                 <div>建仓日: {formatBuyDate(pos.buy_date)}</div>
                 <div>成本: {formatPrice(pos.cost_price)}</div>
                 <div>股数: {pos.hold_volume ?? '--'}</div>
+                {pos.strategy && <div>策略: {pos.strategy}</div>}
               </div>
             </div>
           ))}

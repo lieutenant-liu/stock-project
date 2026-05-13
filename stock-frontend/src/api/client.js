@@ -39,6 +39,8 @@ const api = {
   listAutoSyncRuns: (limit = 20) => request("/api/auto_sync/runs", { params: { limit } }),
   listAutoSyncRunSteps: (runId) => request("/api/auto_sync/run_steps", { params: { run_id: runId } }),
   triggerAutoSyncNow: () => request("/api/auto_sync/run_now", { method: "POST" }),
+  getSystemConfig: () => request("/api/system/config"),
+  updateSystemConfig: (payload) => request("/api/system/config", { method: "PUT", body: payload }),
   getEmailNotifyConfig: () => request("/api/notify/email/config"),
   updateEmailNotifyConfig: (payload) => request("/api/notify/email/config", { method: "PUT", body: payload }),
   listEmailRecipients: () => request("/api/notify/email/recipients"),
@@ -56,6 +58,8 @@ const api = {
   startSyncMoneyFlow: (params) => request("/api/start_sync_moneyflow", { params }),
   startSyncFina: (params) => request("/api/start_sync_fina", { params }),
   startSyncLimit: (params) => request("/api/start_sync_limit", { params }),
+  startSyncCyqPerf: (params) => request("/api/start_sync_cyqperf", { params }),
+  startSyncStkFactorPro: (params) => request("/api/start_sync_stkfactorpro", { params }),
   // 优先使用中性命名接口，旧接口保留兼容
   positionRisk: () => request("/api/position/risk"),
   monitor: () => request("/api/monitor"),

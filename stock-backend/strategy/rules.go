@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math"
 	"stock-backend/tushare"
-	"strings"
 )
 
 // ==========================================
@@ -96,6 +95,11 @@ func (m *MACBAnalyzer) Analyze(ctx *SecurityContext) DiagnoseResult {
 		return DiagnoseResult{Signal: "观望 💤"} // 上方 20% 内有年线级别的套牢盘，不撞墙！
 	}
 
+	// 💥 筹码分布过滤：获利盘过少说明套牢盘沉重，突破容易被砸
+	if ctx.CyqPerf != nil && ctx.CyqPerf.ProfitPct < 15.0 {
+		return DiagnoseResult{Signal: "观望 💤"} // 获利盘不足15%，套牢盘过重
+	}
+
 	// -----------------------------------------------------
 	// 3. 卖出信号锚定与【机构级风控护盾】
 	// -----------------------------------------------------
@@ -116,7 +120,7 @@ func (m *MACBAnalyzer) Analyze(ctx *SecurityContext) DiagnoseResult {
 		}
 		todayFlow := flows[len(flows)-1]
 		if todayFlow.NetMfVol <= 0 {
-			return DiagnoseResult{Signal: "观望 💤"} // 突破日主力在出逃！一票否决
+			return DiagnoseResult{Signal: "观望 💤"} // 突破日资金在出逃！一票否决
 		}
 		netMfWan := todayFlow.NetMfVol * 10000 // 换算为万元
 		// =====================================================
@@ -124,14 +128,14 @@ func (m *MACBAnalyzer) Analyze(ctx *SecurityContext) DiagnoseResult {
 		var sellPrice, stopLossPrice float64
 		var msg string
 
-		// 💥 动态止盈止损：如果当前估值处于历史 60% 以上的高水位，说明属于偏右侧投机，收紧防线！
+		// 动态止盈止损：如果当前估值处于历史 60% 以上的高水位，说明属于偏右侧投机，收紧止损！
 		if ctx.PEPercentile > 0.60 {
-			msg = fmt.Sprintf("⚠️ [估值分位:%.1f%%] 历史水位偏高！但均线收敛且大阳线突破，主力净流入 %.0f 万。只能做短线，跌破半年线立即逃跑！",
+			msg = fmt.Sprintf("⚠️ [估值分位:%.1f%%] 历史水位偏高！但均线收敛且大阳线突破，资金净流入 %.0f 万。只能做短线，跌破半年线立即离场！",
 				ctx.PEPercentile*100, netMfWan)
 			stopLossPrice = ma120
 			sellPrice = today.Close * 1.10
 		} else {
-			msg = fmt.Sprintf("🎯 [估值分位:%.1f%%|市值:%.0f亿] 完美买点！处于历史低估区，均线高度纠缠，主力暴力净买入 %.0f 万元！中线看涨。",
+			msg = fmt.Sprintf("🎯 [估值分位:%.1f%%|市值:%.0f亿] 完美买点！处于历史低估区，均线高度纠缠，资金大幅净买入 %.0f 万元！中线看涨。",
 				ctx.PEPercentile*100, latestFund.TotalMV/10000, netMfWan)
 			stopLossPrice = minMA
 			sellPrice = 0
@@ -141,15 +145,46 @@ func (m *MACBAnalyzer) Analyze(ctx *SecurityContext) DiagnoseResult {
 			Code: code, StrategyName: m.Name(), LatestPrice: today.Close,
 			Signal: "买入 🚀", Message: msg,
 			BuyPrice: today.Close, SellPrice: sellPrice, StopLossPrice: stopLossPrice,
+			PEPercentile: ctx.PEPercentile,
 		}
 	}
 
 	return DiagnoseResult{Signal: "观望 💤"}
 }
 
+func (m *MACBAnalyzer) EvaluateHold(pos *Position, today tushare.DailyKLine, history []tushare.DailyKLine, meta map[string]float64) EvaluateHoldResult {
+	if len(history) < 120 {
+		return EvaluateHoldResult{}
+	}
+
+	pePercentile := pos.BuyResult.PEPercentile
+
+	// 高估值模式 (PE > 60%): 严格止损 MA120 + 10% 止盈
+	if pePercentile > 0.60 {
+		ma120 := CalcMA(history, 120)
+		if ma120 > 0 && today.Close < ma120 {
+			return EvaluateHoldResult{Sell: true, Price: today.Close, Reason: "跌破动态MA120均线止损"}
+		}
+		if pos.BuyPrice > 0 && (today.Close-pos.BuyPrice)/pos.BuyPrice >= 0.10 {
+			return EvaluateHoldResult{Sell: true, Price: today.Close, Reason: "达到10%止盈目标"}
+		}
+	} else {
+		// 低估值模式: 止损 = min(MA30, MA60, MA120)，无固定止盈
+		ma30 := CalcMA(history, 30)
+		ma60 := CalcMA(history, 60)
+		ma120 := CalcMA(history, 120)
+		minMA := math.Min(ma30, math.Min(ma60, ma120))
+		if minMA > 0 && today.Close < minMA {
+			return EvaluateHoldResult{Sell: true, Price: today.Close, Reason: "跌破动态三均线止损"}
+		}
+	}
+
+	return EvaluateHoldResult{}
+}
+
 // ==========================================
 // 🔥 策略二：基本面共振·中枢强势突破 (CBBM - 终极状态机版)
-// 替代原有的粗暴打板流(BBLU)
+// 替代原有的 BBLU 策略
 // ==========================================
 type CBBMAnalyzer struct{}
 
@@ -163,9 +198,6 @@ func (c *CBBMAnalyzer) Analyze(ctx *SecurityContext) DiagnoseResult {
 	klines := ctx.KLines
 	funds := ctx.Fundamentals
 	if len(klines) < 120 {
-		return DiagnoseResult{Signal: "观望 💤"}
-	}
-	if strings.HasPrefix(code, "3") || strings.HasPrefix(code, "688") || strings.HasPrefix(code, "4") || strings.HasPrefix(code, "8") {
 		return DiagnoseResult{Signal: "观望 💤"}
 	}
 	if !checkFundamentalShield(ctx, false) {
@@ -196,7 +228,7 @@ func (c *CBBMAnalyzer) Analyze(ctx *SecurityContext) DiagnoseResult {
 	}
 
 	// -----------------------------------------------------
-	// [宏观调整 1 & 2]：箱体规律与试盘基因
+	// [宏观调整 1 & 2]：箱体规律与试探基因
 	// -----------------------------------------------------
 	boxUpper, boxLower := GetRealBox(klines, 60)
 	if boxLower <= 0 {
@@ -223,6 +255,11 @@ func (c *CBBMAnalyzer) Analyze(ctx *SecurityContext) DiagnoseResult {
 		return DiagnoseResult{Signal: "观望 💤"}
 	}
 
+	// 💥 筹码分布过滤：获利盘过少说明套牢盘沉重，突破容易被砸
+	if ctx.CyqPerf != nil && ctx.CyqPerf.ProfitPct < 15.0 {
+		return DiagnoseResult{Signal: "观望 💤"} // 获利盘不足15%，套牢盘过重
+	}
+
 	// -----------------------------------------------------
 	// [宏观调整 4]：交易剧本重构与【机构级护盾】
 	// -----------------------------------------------------
@@ -243,14 +280,14 @@ func (c *CBBMAnalyzer) Analyze(ctx *SecurityContext) DiagnoseResult {
 	}
 	todayFlow := flows[len(flows)-1]
 	if todayFlow.NetMfVol <= 0 {
-		return DiagnoseResult{Signal: "观望 💤"} // 无主力资金净流入，属于跟风或诱多
+		return DiagnoseResult{Signal: "观望 💤"} // 无资金净流入，属于跟风或诱多
 	}
 	netMfWan := todayFlow.NetMfVol * 10000
 	// =====================================================
 
 	geneMsg := ""
 	if hasProbed {
-		geneMsg = "🎯 侦测到近期【主力试盘洗盘】动作，突破可信度极高！"
+		geneMsg = "🎯 侦测到近期【资金试探洗盘】动作，突破可信度极高！"
 	}
 
 	roomMsg := "已突破近半年高点"
@@ -258,7 +295,7 @@ func (c *CBBMAnalyzer) Analyze(ctx *SecurityContext) DiagnoseResult {
 		roomMsg = fmt.Sprintf("上方真空区约 %.1f%%", room*100)
 	}
 
-	msg := fmt.Sprintf("🔥 [估值分位:%.1f%%|市值:%.0f亿] 放量真突破！主力大单净流入 %.0f 万元！箱体规律(振幅%.1f%%)。%s %s\n"+
+	msg := fmt.Sprintf("🔥 [估值分位:%.1f%%|市值:%.0f亿] 放量真突破！大单资金净流入 %.0f 万元！箱体规律(振幅%.1f%%)。%s %s\n"+
 		"【明日剧本】绝不盲目追高！\n"+
 		"1. 若低开下杀，在支撑位(%.2f)附近企稳买入。\n"+
 		"2. 若平开出小阳线，下午确认承接有力后轻仓打底。\n"+
@@ -271,15 +308,32 @@ func (c *CBBMAnalyzer) Analyze(ctx *SecurityContext) DiagnoseResult {
 		BuyPrice:      boxUpper,
 		SellPrice:     today.Close * (1.0 + room*0.8),
 		StopLossPrice: boxUpper * 0.97,
+		PEPercentile:  ctx.PEPercentile,
 	}
 }
 
+func (c *CBBMAnalyzer) EvaluateHold(pos *Position, today tushare.DailyKLine, history []tushare.DailyKLine, meta map[string]float64) EvaluateHoldResult {
+	boxUpper := meta["box_upper"]
+
+	// 动态止损：跌破箱体上沿 * 0.97（买入时的支撑位）
+	if boxUpper > 0 && today.Close < boxUpper*0.97 {
+		return EvaluateHoldResult{Sell: true, Price: today.Close, Reason: "跌破动态箱体支撑位止损"}
+	}
+
+	// 策略止盈：使用买入时计算的目标价（基于当日收盘价和头顶空间）
+	if pos.BuyResult.SellPrice > 0 && today.Close >= pos.BuyResult.SellPrice {
+		return EvaluateHoldResult{Sell: true, Price: today.Close, Reason: "触及策略止盈位"}
+	}
+
+	return EvaluateHoldResult{}
+}
+
 // ==========================================
-// 🌊 策略三：深海狙击手 2.0 (DSS V2 - EOD 批处理模型)该算法存在重大问题，暂时不要使用
+// 策略三：深海动量 2.0 (DSS V2 - EOD 批处理模型) 该算法存在重大问题，暂时不要使用
 // ==========================================
 type DSSAnalyzer struct{}
 
-func (d *DSSAnalyzer) Name() string           { return "深海狙击手 2.0 (DSS)" }
+func (d *DSSAnalyzer) Name() string           { return "深海动量 2.0 (DSS)" }
 func (d *DSSAnalyzer) RequiredData() []string { return []string{"klines", "fundamentals"} }
 
 func (d *DSSAnalyzer) Analyze(ctx *SecurityContext) DiagnoseResult {
@@ -325,7 +379,7 @@ func (d *DSSAnalyzer) Analyze(ctx *SecurityContext) DiagnoseResult {
 	volMa60 := CalcVolMA(klines, 60)
 	atr14 := CalcATR(klines, 14)
 
-	// 1. 形态收敛：限制上下波动的幅度 (<=30%)，证明主力处于控盘休眠期
+	// 1. 形态收敛：限制上下波动的幅度 (<=30%)，证明资金处于控盘休眠期
 	isSpaceCompressed := amplitude <= 0.30
 
 	// 2. 价格极寒：当前价格处于箱体下方的 30% 区域，且不能跌破绝对底线 (未破位崩盘)
@@ -346,31 +400,52 @@ func (d *DSSAnalyzer) Analyze(ctx *SecurityContext) DiagnoseResult {
 			Signal: "买入 🚀", Message: msg,
 			BuyPrice:      today.Close,          // 左侧潜伏：直接在 C_t 附近从容挂单
 			SellPrice:     boxUpper * 0.99,      // 狂热派发：触及箱体顶部(H_60)回落 1% 卖出，倒给突破客
-			StopLossPrice: boxLower - 1.5*atr14, // 防核按钮：L_60 减去 1.5 倍 ATR 动态防线，跌破无条件斩仓！
+			StopLossPrice: boxLower - 1.5*atr14, // 动态止损：L_60 减去 1.5 倍 ATR 动态止损位，跌破无条件卖出！
+			PEPercentile:  ctx.PEPercentile,
 		}
 	}
 
 	return DiagnoseResult{Signal: "观望 💤"}
 }
 
+func (d *DSSAnalyzer) EvaluateHold(pos *Position, today tushare.DailyKLine, history []tushare.DailyKLine, meta map[string]float64) EvaluateHoldResult {
+	boxUpper := meta["box_upper"]
+	boxLower := meta["box_lower"]
+	atr14 := meta["atr14"]
+
+	// 动态止损：跌破箱体底 - 1.5*ATR
+	if boxLower > 0 && atr14 > 0 && today.Close < boxLower-1.5*atr14 {
+		return EvaluateHoldResult{Sell: true, Price: today.Close, Reason: "跌破动态ATR止损位"}
+	}
+
+	// 止盈：触及箱体顶部 * 0.99
+	if boxUpper > 0 && today.Close >= boxUpper*0.99 {
+		return EvaluateHoldResult{Sell: true, Price: today.Close, Reason: "触及箱体顶部止盈"}
+	}
+
+	return EvaluateHoldResult{}
+}
+
 // ==========================================
-// 🛡️ 全局风控中心：大盘 Beta 熔断检测
+// 全局风控中心：大盘环境检测
 // ==========================================
 
-// CheckMarketEnvironment 评估大盘环境与短线情绪，返回 (是否安全, 诊断报告)
-func CheckMarketEnvironment(indices []tushare.IndexDaily, limitUpCount int, avgPremium float64) (bool, string) {
+// CheckMarketEnvironment 评估大盘环境与短线情绪。
+// 返回 (是否安全, 是否强势市场, 诊断报告)。
+// 强势市场 = 上证 Close > MA60，允许执行 MACB/CBBM 等右侧突破策略。
+func CheckMarketEnvironment(indices []tushare.IndexDaily, limitUpCount int, avgPremium float64) (bool, bool, string) {
 	if len(indices) < 25 {
-		return true, "大盘数据不足，全局风控默认放行。"
+		return true, true, "大盘数据不足，全局风控默认放行。"
 	}
 
 	today := indices[len(indices)-1]
 
-	// 1. 暴跌熔断：大盘单日暴跌
+	// 1. 暴跌风控：大盘单日暴跌
 	if today.PctChg <= -1.5 {
-		return false, fmt.Sprintf("⚠️ 全局熔断：上证指数今日暴跌 %.2f%%！倾巢之下无完卵，严禁逆势开仓！", today.PctChg)
+		return false, false, fmt.Sprintf("⚠️ 全局风控：上证指数今日暴跌 %.2f%%！市场系统性风险骤增，暂停开仓！", today.PctChg)
 	}
 
-	// 2. 趋势熔断：大盘跌破 20日线且向下拐头
+	// 2. 趋势风控：大盘跌破 20日线且向下拐头
 	var sum20, sumPrev20 float64
 	for i := len(indices) - 20; i < len(indices); i++ {
 		sum20 += indices[i].Close
@@ -382,19 +457,26 @@ func CheckMarketEnvironment(indices []tushare.IndexDaily, limitUpCount int, avgP
 	prevMa20 := sumPrev20 / 20.0
 
 	if today.Close < ma20 && ma20 < prevMa20 {
-		return false, "⚠️ 全局熔断：上证指数跌破 20日线 且趋势向下，处于单边空头区间，停止一切突破买入！"
+		return false, false, "⚠️ 全局风控：上证指数跌破 20日线 且趋势向下，处于单边空头区间，暂停突破买入！"
 	}
 
 	// =========================================================
-	// 💥 3. 情绪退潮熔断 (2000积分高阶风控)
+	// 3. 情绪退潮风控 (2000积分高阶风控)
 	// =========================================================
 	if limitUpCount > 0 {
 		if avgPremium <= -2.0 {
-			// 昨天打板的人今天平均亏 2% 以上，说明核按钮遍地，极端恶劣！
-			return false, fmt.Sprintf("🧊 情绪冰点熔断：昨日 %d 只涨停股今日平均大跌 %.2f%%！核按钮遍地，短线接力极度恶劣，管住手！", limitUpCount, avgPremium)
+			return false, false, fmt.Sprintf("🧊 情绪冰点风控：昨日 %d 只涨停股今日平均大跌 %.2f%%！极端抛压遍地，短线接力极度恶劣，管住手！", limitUpCount, avgPremium)
 		} else if avgPremium < 0 {
-			// 负溢价，打板资金没赚钱，短线情绪退潮，假突破极多！
-			return false, fmt.Sprintf("⚠️ 情绪退潮熔断：昨日 %d 只涨停股今日平均收益为 %.2f%%。接力资金在亏钱，市场大概率是骗炮行情，暂缓开仓！", limitUpCount, avgPremium)
+			return false, false, fmt.Sprintf("⚠️ 情绪退潮风控：昨日 %d 只涨停股今日平均收益为 %.2f%%。接力资金在亏钱，市场大概率是诱多行情，暂缓开仓！", limitUpCount, avgPremium)
+		}
+	}
+
+	// 4. 强弱市场判断：上证 Close > MA60 为强势，否则为弱势
+	strong := true
+	if len(indices) >= 60 {
+		ma60 := CalcMAFromData(indices, 60)
+		if ma60 > 0 && today.Close < ma60 {
+			strong = false
 		}
 	}
 
@@ -403,16 +485,114 @@ func CheckMarketEnvironment(indices []tushare.IndexDaily, limitUpCount int, avgP
 		premiumMsg = fmt.Sprintf("昨日涨停股今日平均溢价(吃肉率)为 %.2f%%", avgPremium)
 	}
 
-	return true, fmt.Sprintf("✅ 大盘与情绪健康 (指数涨跌: %.2f%%，%s)，允许个股引擎开火。", today.PctChg, premiumMsg)
+	regimeTag := "强势"
+	if !strong {
+		regimeTag = "弱势"
+	}
+
+	return true, strong, fmt.Sprintf("✅ 大盘与情绪健康 (指数涨跌: %.2f%%，%s，%s环境)，允许个股策略运行。", today.PctChg, premiumMsg, regimeTag)
 }
 
 // ==========================================
-// ⚙️ 军师联盟注册中心 (Registry - 更新挂载)
+// 全局硬止损：12% 动态追踪止损
+// ==========================================
+
+// CalcTrailingStopTrigger 计算追踪止损的触发价和当前 high watermark。
+// 不做任何流动性判断，纯计算。返回 (triggerPrice, highWatermark)。
+func CalcTrailingStopTrigger(history []tushare.DailyKLine, threshold float64) (float64, float64) {
+	if len(history) == 0 || threshold <= 0 {
+		return 0, 0
+	}
+	highWatermark := 0.0
+	for _, k := range history {
+		if k.Close > highWatermark {
+			highWatermark = k.Close
+		}
+	}
+	if highWatermark <= 0 {
+		return 0, 0
+	}
+	return highWatermark * (1 - threshold), highWatermark
+}
+
+// IsTrailingStopTriggered 仅判断止损条件是否满足（今日最低价击穿止损线）。
+// 不做任何流动性/成交判断。用于调用方提前标记 trailingStopArmed。
+func IsTrailingStopTriggered(today tushare.DailyKLine, history []tushare.DailyKLine, threshold float64) bool {
+	triggerPrice, _ := CalcTrailingStopTrigger(history, threshold)
+	return triggerPrice > 0 && today.Low <= triggerPrice
+}
+
+// CheckTrailingStop 检查是否触发从最高价回撤的硬性追踪止损，并模拟真实 A 股流动性摩擦。
+// 三种场景：跳空低开以开盘价成交、一字跌停拒绝卖出、盘中触及以止损价成交。
+// history 应为从买入日到当前日的完整 K 线（含两端）。
+// threshold 为回撤比例阈值（如 0.12 表示 12%）。
+// 返回 (是否实际成交卖出, 成交价格, 原因)。
+func CheckTrailingStop(today tushare.DailyKLine, history []tushare.DailyKLine, threshold float64) (bool, float64, string) {
+	triggerPrice, highWatermark := CalcTrailingStopTrigger(history, threshold)
+	if triggerPrice <= 0 {
+		return false, 0, ""
+	}
+
+	// 今天最低价都高于止损线 → 未触发
+	if today.Low > triggerPrice {
+		return false, 0, ""
+	}
+
+	// 一字跌停无流动性 — 拒绝卖出（调用方应通过 IsTrailingStopTriggered 提前设 trailingStopArmed）
+	isLimitDownLocked := today.High == today.Low || today.Vol == 0
+	if isLimitDownLocked {
+		return false, 0, ""
+	}
+
+	// 跳空低开直接击穿止损线 — 以开盘价成交
+	if today.Open < triggerPrice {
+		return true, today.Open, fmt.Sprintf("跳空低开触发 %.0f%% 止损（最高价 %.2f，开盘击穿止损线 %.2f，成交 %.2f）",
+			threshold*100, highWatermark, triggerPrice, today.Open)
+	}
+
+	// 盘中正常触及止损位 — 以止损价成交
+	return true, triggerPrice, fmt.Sprintf("盘中触发 %.0f%% 止损（最高价 %.2f → 止损线 %.2f，当日最低 %.2f）",
+		threshold*100, highWatermark, triggerPrice, today.Low)
+}
+
+// CheckHardStop 检查从买入价算起的绝对硬止损（阶段A使用）。
+// threshold 为跌幅阈值（如 0.08 表示 -8%）。
+// 返回 (是否触发, 成交价格, 原因)。
+func CheckHardStop(today tushare.DailyKLine, buyPrice, threshold float64) (bool, float64, string) {
+	if buyPrice <= 0 || threshold <= 0 {
+		return false, 0, ""
+	}
+	stopPrice := buyPrice * (1 - threshold)
+
+	// 今日最低价都高于止损线 → 未触发
+	if today.Low > stopPrice {
+		return false, 0, ""
+	}
+
+	// 一字跌停无流动性 — 拒绝卖出
+	isLimitDownLocked := today.High == today.Low || today.Vol == 0
+	if isLimitDownLocked {
+		return false, 0, ""
+	}
+
+	// 跳空低开直接击穿止损线 — 以开盘价成交
+	if today.Open < stopPrice {
+		return true, today.Open, fmt.Sprintf("跳空低开触发 %.0f%% 硬止损（买入价 %.2f，止损线 %.2f，开盘击穿成交 %.2f）",
+			threshold*100, buyPrice, stopPrice, today.Open)
+	}
+
+	// 盘中正常触及止损位 — 以止损价成交
+	return true, stopPrice, fmt.Sprintf("盘中触发 %.0f%% 硬止损（买入价 %.2f → 止损线 %.2f，当日最低 %.2f）",
+		threshold*100, buyPrice, stopPrice, today.Low)
+}
+
+// ==========================================
+// 策略注册中心 (Registry)
 // ==========================================
 func GetActiveAnalyzers() []Analyzer {
 	return []Analyzer{
 		&MACBAnalyzer{}, // 均线收敛 (策略一)
 		&CBBMAnalyzer{}, // 中枢强势突破 (策略二，替换原 BBLU)
-		// &DSSAnalyzer{},  // ⚠️ 深海狙击手 (策略三，存在重大问题，暂时下线)
+		// &DSSAnalyzer{},  // ⚠️ 深海动量 (策略三，存在重大问题，暂时下线)
 	}
 }

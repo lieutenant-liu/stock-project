@@ -19,6 +19,9 @@ function DataPipelineWorkspace({ isActive }) {
   const [syncMsgMoney, setSyncMsgMoney] = useState('')
   const [syncMsgFina, setSyncMsgFina] = useState('')
   const [syncMsgLimit, setSyncMsgLimit] = useState('')
+  const [syncMsgCyqPerf, setSyncMsgCyqPerf] = useState('')
+  const [syncMsgStkFactorPro, setSyncMsgStkFactorPro] = useState('')
+  const [enableProData, setEnableProData] = useState(false)
   const [sysLogs, setSysLogs] = useState([])
 
   useEffect(() => {
@@ -35,6 +38,15 @@ function DataPipelineWorkspace({ isActive }) {
       }
     }, 1000)
     return () => clearInterval(timer)
+  }, [isActive])
+
+  useEffect(() => {
+    if (!isActive) return
+    api.getSystemConfig().then(res => {
+      if (res.code === 200 && res.data) {
+        setEnableProData(!!res.data.enable_pro_data)
+      }
+    }).catch(() => {})
   }, [isActive])
 
   const updateToken = async () => {
@@ -144,6 +156,28 @@ function DataPipelineWorkspace({ isActive }) {
     setSyncMsgLimit(result.msg)
   }
 
+  const triggerSyncCyqPerf = async () => {
+    if (dataSource === 'opensource') return alert('⚠️ 筹码分布为 Tushare 5000积分专属，请先切换高权引擎！')
+    setSyncMsgCyqPerf('请求管线中...')
+    const result = await api.startSyncCyqPerf({
+      start: syncStart.replace(/-/g, ''),
+      end: syncEnd.replace(/-/g, ''),
+      codes: inputCode
+    })
+    setSyncMsgCyqPerf(result.msg)
+  }
+
+  const triggerSyncStkFactorPro = async () => {
+    if (dataSource === 'opensource') return alert('⚠️ 技术因子专业版为 Tushare 5000积分专属，请先切换高权引擎！')
+    setSyncMsgStkFactorPro('请求管线中...')
+    const result = await api.startSyncStkFactorPro({
+      start: syncStart.replace(/-/g, ''),
+      end: syncEnd.replace(/-/g, ''),
+      codes: inputCode
+    })
+    setSyncMsgStkFactorPro(result.msg)
+  }
+
   return (
     <DataPipelinePanel
       inputCode={inputCode}
@@ -169,6 +203,10 @@ function DataPipelineWorkspace({ isActive }) {
       triggerSyncMoneyFlow={triggerSyncMoneyFlow}
       triggerSyncFina={triggerSyncFina}
       triggerSyncLimit={triggerSyncLimit}
+      triggerSyncCyqPerf={triggerSyncCyqPerf}
+      triggerSyncStkFactorPro={triggerSyncStkFactorPro}
+      enableProData={enableProData}
+      setEnableProData={setEnableProData}
       syncMsgKline={syncMsgKline}
       syncMsgFund={syncMsgFund}
       syncMsgAdj={syncMsgAdj}
@@ -176,6 +214,8 @@ function DataPipelineWorkspace({ isActive }) {
       syncMsgMoney={syncMsgMoney}
       syncMsgFina={syncMsgFina}
       syncMsgLimit={syncMsgLimit}
+      syncMsgCyqPerf={syncMsgCyqPerf}
+      syncMsgStkFactorPro={syncMsgStkFactorPro}
       sysLogs={sysLogs}
     />
   )

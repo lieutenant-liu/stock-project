@@ -21,11 +21,13 @@ type DataProvider interface {
 	FetchIndexDaily(tsCode, startDate, endDate string) ([]tushare.IndexDaily, error)
 	FetchMoneyFlow(tsCode, startDate, endDate string) ([]tushare.DailyMoneyFlow, error)
 	FetchStkLimit(tradeDate string) ([]tushare.StkLimit, error) // 💥 挂载涨跌停榜武器
+	FetchCyqPerf(tsCode, tradeDate string) ([]tushare.CyqPerf, error)
+	FetchStkFactorPro(tsCode, tradeDate string) ([]tushare.StkFactorPro, error)
 	GetName() string
 }
 
 // ------------------------------------------
-// 驱动 A：Tushare 高级付费装甲兵 (全量历史基石)
+// 驱动 A：Tushare 高级付费付费数据源 (全量历史基石)
 type TushareProvider struct{}
 
 func (t *TushareProvider) GetName() string { return "Tushare [高级]" }
@@ -46,6 +48,12 @@ func (t *TushareProvider) FetchMoneyFlow(tsCode, startDate, endDate string) ([]t
 }
 func (t *TushareProvider) FetchStkLimit(tradeDate string) ([]tushare.StkLimit, error) {
 	return tushare.FetchStkLimit(tradeDate)
+}
+func (t *TushareProvider) FetchCyqPerf(tsCode, tradeDate string) ([]tushare.CyqPerf, error) {
+	return tushare.FetchCyqPerf(tsCode, tradeDate)
+}
+func (t *TushareProvider) FetchStkFactorPro(tsCode, tradeDate string) ([]tushare.StkFactorPro, error) {
+	return tushare.FetchStkFactorPro(tsCode, tradeDate)
 }
 
 // ------------------------------------------
@@ -84,6 +92,12 @@ func (o *OpenSourceProvider) FetchMoneyFlow(tsCode, startDate, endDate string) (
 func (o *OpenSourceProvider) FetchStkLimit(tradeDate string) ([]tushare.StkLimit, error) {
 	// 开源降级版暂不支持，保护接口一致性
 	return nil, fmt.Errorf("开源接口暂不支持历史涨跌停绝对价拉取")
+}
+func (o *OpenSourceProvider) FetchCyqPerf(tsCode, tradeDate string) ([]tushare.CyqPerf, error) {
+	return nil, fmt.Errorf("开源接口暂不支持筹码分布数据拉取")
+}
+func (o *OpenSourceProvider) FetchStkFactorPro(tsCode, tradeDate string) ([]tushare.StkFactorPro, error) {
+	return nil, fmt.Errorf("开源接口暂不支持技术因子专业版数据拉取")
 }
 
 // ==========================================
@@ -130,13 +144,13 @@ func GetLogs() []string {
 }
 
 // ==========================================
-// 💥 引擎 A：专属 K 线抽水机
-// 💥 引擎 A：专属 K 线抽水机 (V3.0 动态射速版)
-// 💥 引擎 A：专属 K 线抽水机 (黎明扫荡版：精确填缝)
+// 💥 引擎 A：专属 K 线采集器
+// 💥 引擎 A：专属 K 线采集器 (V3.0 动态请求频率版)
+// 💥 引擎 A：专属 K 线采集器 (黎明补齐版：精确填缝)
 func StartSyncKLine(provider DataProvider, stockCodes []string, targetStart string, targetEnd string) SyncSummary {
 	total := len(stockCodes)
 	summary := SyncSummary{Module: "kline", Total: total}
-	LogMsg("🚀 [抽水机A] K线引擎启动！当前源:[%s]\n", provider.GetName())
+	LogMsg("🚀 [采集器A] K线引擎启动！当前源:[%s]\n", provider.GetName())
 	// 💥 补上这段火力权重判定
 	targetTrust := 50
 	if provider.GetName() == "Tushare [高级]" {
@@ -202,15 +216,15 @@ func StartSyncKLine(provider DataProvider, stockCodes []string, targetStart stri
 			summary.Failed++
 		}
 	}
-	LogMsg("🎉 [抽水机A] K线填缝网络拉取阶段完成！(请等待 Sink 落盘)\n")
+	LogMsg("🎉 [采集器A] K线填缝网络拉取阶段完成！(请等待 Sink 落盘)\n")
 	return summary
 }
 
-// 💥 引擎 B：专属基本面抽水机 (黎明扫荡版：异步单点汇聚)
+// 💥 引擎 B：专属基本面采集器 (黎明补齐版：异步单点汇聚)
 func StartSyncFund(provider DataProvider, stockCodes []string, targetStart string, targetEnd string) SyncSummary {
 	total := len(stockCodes)
 	summary := SyncSummary{Module: "fund", Total: total}
-	LogMsg("💎 [抽水机B] 基本面引擎启动！\n")
+	LogMsg("💎 [采集器B] 基本面引擎启动！\n")
 	// 💥 补上这段火力权重判定
 	targetTrust := 50
 	if provider.GetName() == "Tushare [高级]" {
@@ -255,15 +269,15 @@ func StartSyncFund(provider DataProvider, stockCodes []string, targetStart strin
 			summary.Failed++
 		}
 	}
-	LogMsg("🎉 [抽水机B] 基本面网络拉取填缝完成！(等待后台 Sink 落盘)\n")
+	LogMsg("🎉 [采集器B] 基本面网络拉取填缝完成！(等待后台 Sink 落盘)\n")
 	return summary
 }
 
-// 💥 引擎 C：专属复权因子抽水机
+// 💥 引擎 C：专属复权因子采集器
 func StartSyncAdjFactors(provider DataProvider, stockCodes []string, targetStart string, targetEnd string) SyncSummary {
 	total := len(stockCodes)
 	summary := SyncSummary{Module: "adj", Total: total}
-	LogMsg("🧬 [抽水机C] 复权因子引擎启动！当前源:[%s]\n", provider.GetName())
+	LogMsg("🧬 [采集器C] 复权因子引擎启动！当前源:[%s]\n", provider.GetName())
 
 	targetTrust := 50
 	if provider.GetName() == "Tushare [高级]" {
@@ -305,27 +319,27 @@ func StartSyncAdjFactors(provider DataProvider, stockCodes []string, targetStart
 			summary.Failed++
 		}
 	}
-	LogMsg("🎉 [抽水机C] 复权因子网络拉取完成！\n")
+	LogMsg("🎉 [采集器C] 复权因子网络拉取完成！\n")
 	return summary
 }
 
-// 💥 引擎 G：专属涨跌榜抽水机 (通过日历智能推导区间)
+// 💥 引擎 G：专属涨跌榜采集器 (通过日历智能推导区间)
 func StartSyncStkLimit(provider DataProvider, targetStart string, targetEnd string) SyncSummary {
 	summary := SyncSummary{Module: "stklimit"}
-	LogMsg("🔥 [抽水机G] 涨跌停引擎启动！当前源:[%s]", provider.GetName())
+	LogMsg("🔥 [采集器G] 涨跌停引擎启动！当前源:[%s]", provider.GetName())
 
-	// 调用我们刚刚写好的日历雷达，直接锁定所有空洞日期！
+	// 调用我们刚刚写好的日历检测器，直接锁定所有空洞日期！
 	missingDates := db.GetMarketMissingDates("daily_stk_limit", targetStart, targetEnd)
 
 	if len(missingDates) == 0 {
-		LogMsg("✅ [抽水机G] 目标区间涨跌停数据严丝合缝，无需重复拉取！")
+		LogMsg("✅ [采集器G] 目标区间涨跌停数据严丝合缝，无需重复拉取！")
 		summary.Skipped = 1
 		return summary
 	}
 
 	summary.Total = len(missingDates)
 	summary.Targeted = len(missingDates)
-	LogMsg("⏳ [抽水机G] 发现 %d 个交易日缺失数据，开始逐日补齐...", len(missingDates))
+	LogMsg("⏳ [采集器G] 发现 %d 个交易日缺失数据，开始逐日补齐...", len(missingDates))
 	totalSaved := 0
 
 	for i, d := range missingDates {
@@ -333,7 +347,7 @@ func StartSyncStkLimit(provider DataProvider, targetStart string, targetEnd stri
 
 		limits, err := provider.FetchStkLimit(d)
 		if err != nil {
-			LogMsg("⚠️ [抽水机G] %s 报错: %v", d, err)
+			LogMsg("⚠️ [采集器G] %s 报错: %v", d, err)
 			time.Sleep(2 * time.Second) // 遇到错误冷静两秒
 			summary.Failed++
 			continue
@@ -356,9 +370,9 @@ func StartSyncStkLimit(provider DataProvider, targetStart string, targetEnd stri
 		}
 
 		if (i+1)%50 == 0 || i == len(missingDates)-1 {
-			LogMsg("🔄 [抽水机G] 进度汇报: 已处理 %d/%d 天，累计发现 %d 个标的...", i+1, len(missingDates), totalSaved)
+			LogMsg("🔄 [采集器G] 进度汇报: 已处理 %d/%d 天，累计发现 %d 个标的...", i+1, len(missingDates), totalSaved)
 		}
 	}
-	LogMsg("🎉 [抽水机G] 涨跌停底座历史扫荡完成！共推入真实数据: %d 条！", totalSaved)
+	LogMsg("🎉 [采集器G] 涨跌停底座历史补齐完成！共推入真实数据: %d 条！", totalSaved)
 	return summary
 }

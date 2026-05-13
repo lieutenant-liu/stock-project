@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"stock-backend/db"
+	"stock-backend/stockutil"
 	"stock-backend/strategy"
 	"stock-backend/tushare"
 )
@@ -94,7 +95,7 @@ func DiagnoseHandler(w http.ResponseWriter, r *http.Request) {
 	// 核心调度：唤醒已启用的策略分析器
 	activeAnalyzers := strategy.GetActiveAnalyzers()
 	// =========================================================
-	// 🛡️ [机构级风控：大盘 Beta 与 情绪冰点 全局熔断前置拦截]
+	// [机构级风控：大盘环境与情绪冰点前置拦截]
 	// =========================================================
 	shIndexData := db.GetIndexDailyFromDB("000001.SH", startDate, endDate)
 
@@ -108,7 +109,7 @@ func DiagnoseHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 将溢价率数据送入风控模块
-	isMarketSafe, marketMsg := strategy.CheckMarketEnvironment(shIndexData, limitUpCount, avgPremium)
+	isMarketSafe, _, marketMsg := strategy.CheckMarketEnvironment(shIndexData, limitUpCount, avgPremium)
 
 	fmt.Printf("🌐 [全局风控] %s\n", marketMsg)
 
@@ -119,6 +120,11 @@ func DiagnoseHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	// =========================================================
 	for _, code := range codeList {
+		// 0. 板块过滤：仅保留主板股票（排除创业板/科创板/北交所）
+		if !stockutil.IsValidMainBoardCode(code) {
+			continue
+		}
+
 		// 1. 过滤垃圾股，同时提取【所属行业】
 		var stockName, industry string
 
@@ -173,6 +179,9 @@ func DiagnoseHandler(w http.ResponseWriter, r *http.Request) {
 
 		pePercentile := db.GetPEPercentile(code, endDate, 750)
 
+		// 筹码分布数据（最新交易日）
+		cyqPerf := db.GetCyqPerfFromDB(code, endDate)
+
 		// 直接使用纯净的 stockName
 		ctx := &strategy.SecurityContext{
 			Code:         code,
@@ -181,6 +190,7 @@ func DiagnoseHandler(w http.ResponseWriter, r *http.Request) {
 			Fundamentals: fundData,
 			MoneyFlows:   flowData,
 			PEPercentile: pePercentile,
+			CyqPerf:      cyqPerf,
 		}
 
 		// 4. 多策略并发/循环分析
@@ -242,7 +252,7 @@ func DiagnoseHandler(w http.ResponseWriter, r *http.Request) {
 			} else if count == 2 {
 				tagName = "[🔥 行业异动·中强度]" // 中高权重：资金关注提升
 			} else {
-				tagName = "[🐺 独立行情·低强度]" // 低权重：个股独立逻辑
+				tagName = "[📈 独立走势·低强度]" // 低权重：个股独立逻辑
 			}
 
 			// 将标签强行注入策略名称，前端会直接高亮显示
@@ -342,6 +352,7 @@ func GetPositionsHandler(w http.ResponseWriter, r *http.Request) {
 
 // ==========================================
 // 持仓风险评估核心接口 (PositionRiskHandler)
+// 100% 复用策略引擎 EvaluateHold，与回测卖出逻辑镜像一致。
 // ==========================================
 func PositionRiskHandler(w http.ResponseWriter, r *http.Request) {
 	prepareAPIJSON(w)
@@ -354,6 +365,16 @@ func PositionRiskHandler(w http.ResponseWriter, r *http.Request) {
 
 	endDate := time.Now().Format("20060102")
 	latestMarketDate := db.GetLatestOpenTradeDate(endDate)
+
+	// 构建策略名→Analyzer 实例的映射表
+	analyzers := strategy.GetActiveAnalyzers()
+	analyzerMap := make(map[string]strategy.Analyzer, len(analyzers)+1)
+	for _, a := range analyzers {
+		analyzerMap[a.Name()] = a
+	}
+	// DSS 虽然禁用但持仓可能仍关联它
+	analyzerMap[(&strategy.DSSAnalyzer{}).Name()] = &strategy.DSSAnalyzer{}
+
 	var reports []map[string]interface{}
 	missingCount := 0
 	staleCount := 0
@@ -361,8 +382,9 @@ func PositionRiskHandler(w http.ResponseWriter, r *http.Request) {
 	for _, pos := range positions {
 		displayName := resolveStockName(pos.TSCode, pos.StockName)
 
-		// 1. 动态获取建仓日以来的所有 K 线 (这是计算水位的关键)
-		historyData := db.GetKLinesFromDB(pos.TSCode, pos.BuyDate, endDate)
+		// 1. 加载买入日之前的额外 K 线（策略需要 120+ 天历史计算均线/箱体）
+		lookbackStart := subtractDays(pos.BuyDate, 300)
+		historyData := db.GetKLinesFromDB(pos.TSCode, lookbackStart, endDate)
 		if len(historyData) == 0 {
 			missingCount++
 			reports = append(reports, map[string]interface{}{
@@ -373,66 +395,145 @@ func PositionRiskHandler(w http.ResponseWriter, r *http.Request) {
 				"buy_date":          pos.BuyDate,
 				"cost_price":        pos.CostPrice,
 				"current_price":     nil,
-				"high_watermark":    nil,
 				"profit_pct":        nil,
-				"retracement":       nil,
 				"action":            "⚪ 数据待补齐",
 				"status":            "missing_data",
 				"data_trade_date":   "",
 				"latest_trade_date": latestMarketDate,
 				"is_stale":          true,
-				"reason":            fmt.Sprintf("未找到 %s 从建仓日(%s)到当前的有效日线数据。请先同步近期K线后再执行风险评估。", pos.TSCode, pos.BuyDate),
+				"reason":            fmt.Sprintf("未找到 %s 从 %s 到当前的有效日线数据。请先同步近期K线。", pos.TSCode, lookbackStart),
 			})
 			continue
 		}
 
-		// 2. 前复权清洗 (消除除权断层)
-		adjFactors := db.GetAdjFactorsFromDB(pos.TSCode, pos.BuyDate, endDate)
+		// 2. 前复权清洗
+		adjFactors := db.GetAdjFactorsFromDB(pos.TSCode, lookbackStart, endDate)
 		if len(adjFactors) > 0 {
 			historyData = strategy.ForwardAdjustKLines(historyData, adjFactors)
 		}
 
 		today := historyData[len(historyData)-1]
 		currentPrice := today.Close
+		dataTradeDate := today.TradeDate
 
-		// 💥 3. 动态推演最高水位 (极简算法：建仓以来的最高收盘价)
+		// 3. 计算盈亏指标（保留给前端展示）
+		profitPct := (currentPrice - pos.CostPrice) / pos.CostPrice * 100
 		highWatermark := pos.CostPrice
 		for _, k := range historyData {
 			if k.Close > highWatermark {
 				highWatermark = k.Close
 			}
 		}
+		retracement := 0.0
+		if highWatermark > 0 {
+			retracement = (highWatermark - currentPrice) / highWatermark * 100
+		}
 
-		// 4. 风险指标计算
-		profitPct := (currentPrice - pos.CostPrice) / pos.CostPrice * 100
-		retracement := (highWatermark - currentPrice) / highWatermark * 100
-		ma20 := strategy.CalcMA(historyData, 20)
-		dataTradeDate := today.TradeDate
+		// 4. 定位买入日在 K 线数组中的位置（后续多处复用）
+		buyIdx := -1
+		for idx, k := range historyData {
+			if k.TradeDate >= pos.BuyDate {
+				buyIdx = idx
+				break
+			}
+		}
+		if buyIdx < 0 {
+			buyIdx = 0
+		}
 
-		action := "🟢 继续持有"
-		reason := "当前波动可控，可继续跟踪。"
+		// 5. 查找对应的策略 Analyzer
+		analyzer, found := analyzerMap[pos.Strategy]
+		if !found || pos.Strategy == "" {
+			// 未关联策略的持仓：降级为通用展示
+			action := "🟢 继续持有"
+			reason := "未关联策略引擎，请手动评估。"
+
+			// 12% 硬性追踪止损（即使未关联策略也生效）
+			holdingHistory := historyData[buyIdx:]
+			if triggered, _, trailReason := strategy.CheckTrailingStop(today, holdingHistory, 0.12); triggered {
+				action = "🔴 触发动态硬止损"
+				reason = trailReason
+			} else if strategy.IsTrailingStopTriggered(today, holdingHistory, 0.12) {
+				action = "⚠️ 触发止损但跌停无法卖出"
+				reason = "12% 止损条件已满足，但当前处于跌停状态无法成交，需等待跌停打开后立即卖出。"
+			} else if profitPct <= -8.0 {
+				action = "🔴 建议止损"
+				reason = fmt.Sprintf("浮亏 %.2f%%，已超过 -8%% 止损线。", profitPct)
+			}
+			reports = append(reports, buildPositionReport(pos, displayName, currentPrice, profitPct, retracement, highWatermark, action, reason, "ok", dataTradeDate, latestMarketDate))
+			continue
+		}
+
+		// 6. 重建策略元数据（从买入日的 K 线上下文复原 box/ATR 参数）
+		meta := buildLiveStrategyMeta(pos.Strategy, historyData, buyIdx)
+
+		// 7. 构建 Position 对象供 EvaluateHold 使用
+		strategyPos := &strategy.Position{
+			Code:     pos.TSCode,
+			BuyDate:  pos.BuyDate,
+			BuyPrice: pos.CostPrice,
+			Strategy: pos.Strategy,
+			// BuyResult 仅用于 MACB 的 PEPercentile；实盘持仓无此数据，降级为 0.5
+			BuyResult: strategy.DiagnoseResult{PEPercentile: 0.5},
+		}
+
+		// 8. 两阶段动态止损（与回测完全一致）
+		holdingHistory := historyData[buyIdx:]
+		maxGainPct := (highWatermark - pos.CostPrice) / pos.CostPrice * 100
+		stageBActive := maxGainPct >= 15.0
+
+		var stopTriggered, stopConditionMet bool
+		var stopReason string
+
+		if stageBActive {
+			// 阶段B：利润锁定期，启用12%高水位追踪止损
+			stopTriggered, _, stopReason = strategy.CheckTrailingStop(today, holdingHistory, 0.12)
+			stopConditionMet = !stopTriggered && strategy.IsTrailingStopTriggered(today, holdingHistory, 0.12)
+		} else {
+			// 阶段A：利润缓冲期，仅执行-8%绝对硬止损
+			stopTriggered, _, stopReason = strategy.CheckHardStop(today, pos.CostPrice, 0.08)
+			stopConditionMet = false // 硬止损无armed状态
+		}
+
+		// 9. 调用策略 EvaluateHold（与回测完全一致的卖出判断）
+		eval := analyzer.EvaluateHold(strategyPos, today, historyData, meta)
+
+		// 10. 组装前端输出
+		stageTag := "A"
+		if stageBActive {
+			stageTag = "B"
+		}
+		action := fmt.Sprintf("🟢 策略持仓中 [阶段%s]", stageTag)
+		reason := fmt.Sprintf("策略 [%s] 持仓评估通过，当前价格 %.2f，最大浮盈 %.1f%%。", pos.Strategy, currentPrice, maxGainPct)
 		status := "ok"
 
-		// 风控 1：利润保护 (8% 动态回撤)
-		if retracement >= 8.0 {
-			action = "🔴 建议减仓/止盈"
-			reason = fmt.Sprintf("利润回撤达到 %.2f%%，已跌破最高价 %.2f 的 8%% 动态保护线。", retracement, highWatermark)
-		} else if currentPrice < ma20 && ma20 > 0 {
-			// 风控 2：趋势转弱 (跌破 20 日均线)
-			action = "🔴 建议减仓"
-			reason = fmt.Sprintf("趋势转弱：今日收盘 %.2f 已跌破 20 日均线 %.2f。", currentPrice, ma20)
-		} else if retracement >= 6.0 {
-			// 🟡 预警状态
-			action = "🟡 风险预警"
-			reason = fmt.Sprintf("距高点已回撤 %.2f%%，接近 8%% 动态保护线，请重点关注。", retracement)
+		if stopTriggered {
+			if stageBActive {
+				action = "🔴 触发动态追踪止损"
+			} else {
+				action = "🔴 触发-8%硬止损"
+			}
+			reason = stopReason
+			status = "sell_signal"
+		} else if stopConditionMet {
+			// 止损条件满足但因跌停无法卖出
+			action = "⚠️ 触发止损但跌停无法卖出"
+			reason = "止损条件已满足，但当前处于跌停状态无法成交，需等待跌停打开后立即卖出。"
+			status = "sell_signal"
+		} else if eval.Sell {
+			action = "🔴 策略触发卖出"
+			reason = eval.Reason
+			status = "sell_signal"
 		}
 
 		isStale := latestMarketDate != "" && dataTradeDate < latestMarketDate
 		if isStale {
 			staleCount++
-			action = "🟡 数据待更新"
-			status = "stale_data"
-			reason = fmt.Sprintf("当前评估基于 %s 的收盘数据，落后于最新交易日 %s。请先同步近期K线后再做交易决策。", dataTradeDate, latestMarketDate)
+			if !stopTriggered && !stopConditionMet && !eval.Sell {
+				action = "🟡 数据待更新"
+				status = "stale_data"
+			}
+			reason += fmt.Sprintf(" (数据截至 %s，最新交易日 %s)", dataTradeDate, latestMarketDate)
 		}
 
 		reports = append(reports, map[string]interface{}{
@@ -445,6 +546,8 @@ func PositionRiskHandler(w http.ResponseWriter, r *http.Request) {
 			"current_price":     currentPrice,
 			"high_watermark":    highWatermark,
 			"profit_pct":        profitPct,
+			"max_gain_pct":      maxGainPct,
+			"stage":             stageTag,
 			"retracement":       retracement,
 			"action":            action,
 			"status":            status,
@@ -458,6 +561,61 @@ func PositionRiskHandler(w http.ResponseWriter, r *http.Request) {
 	normalCount := len(reports) - missingCount - staleCount
 	msg := fmt.Sprintf("持仓风险评估完成：正常 %d，缺失数据 %d，数据过期 %d。", normalCount, missingCount, staleCount)
 	writeAPIResponse(w, 200, msg, reports)
+}
+
+// buildPositionReport 辅助：构建持仓报告 map。
+func buildPositionReport(pos db.Position, displayName string, currentPrice, profitPct, retracement, highWatermark float64, action, reason, status, dataTradeDate, latestMarketDate string) map[string]interface{} {
+	isStale := latestMarketDate != "" && dataTradeDate < latestMarketDate
+	return map[string]interface{}{
+		"id":                pos.ID,
+		"ts_code":           pos.TSCode,
+		"name":              displayName,
+		"hold_volume":       pos.HoldVolume,
+		"buy_date":          pos.BuyDate,
+		"cost_price":        pos.CostPrice,
+		"current_price":     currentPrice,
+		"high_watermark":    highWatermark,
+		"profit_pct":        profitPct,
+		"retracement":       retracement,
+		"action":            action,
+		"status":            status,
+		"data_trade_date":   dataTradeDate,
+		"latest_trade_date": latestMarketDate,
+		"is_stale":          isStale,
+		"reason":            reason,
+	}
+}
+
+// buildLiveStrategyMeta 从买入日的 K 线上下文重建 EvaluateHold 所需的策略元数据。
+// 与回测的 buildStrategyMeta 使用完全相同的计算逻辑。
+func buildLiveStrategyMeta(strategyName string, klines []tushare.DailyKLine, buyIdx int) map[string]float64 {
+	meta := make(map[string]float64)
+
+	switch {
+	case strings.Contains(strategyName, "CBBM"):
+		if buyIdx >= 60 {
+			boxUpper, _ := strategy.GetRealBox(klines[:buyIdx+1], 60)
+			meta["box_upper"] = boxUpper
+		}
+
+	case strings.Contains(strategyName, "DSS"):
+		if buyIdx >= 60 {
+			boxUpper, boxLower := strategy.GetRealBox(klines[:buyIdx+1], 60)
+			meta["box_upper"] = boxUpper
+			meta["box_lower"] = boxLower
+			meta["atr14"] = strategy.CalcATR(klines[:buyIdx+1], 14)
+		}
+	}
+	return meta
+}
+
+// subtractDays 从 YYYYMMDD 字符串中减去 N 天。
+func subtractDays(dateStr string, days int) string {
+	t, err := time.Parse("20060102", dateStr)
+	if err != nil {
+		return dateStr
+	}
+	return t.AddDate(0, 0, -days).Format("20060102")
 }
 
 // MonitorHandler 兼容旧路由别名（后续可逐步下线）

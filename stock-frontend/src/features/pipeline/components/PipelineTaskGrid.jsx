@@ -22,6 +22,8 @@ function PipelineTaskGrid({
   triggerSyncMoneyFlow,
   triggerSyncFina,
   triggerSyncLimit,
+  triggerSyncCyqPerf,
+  triggerSyncStkFactorPro,
   syncMsgKline,
   syncMsgFund,
   syncMsgAdj,
@@ -29,6 +31,9 @@ function PipelineTaskGrid({
   syncMsgMoney,
   syncMsgFina,
   syncMsgLimit,
+  syncMsgCyqPerf,
+  syncMsgStkFactorPro,
+  enableProData,
 }) {
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '20px', maxWidth: '1200px', margin: '0 auto 30px auto' }}>
@@ -36,9 +41,11 @@ function PipelineTaskGrid({
       <PipelineTaskCard title="💎 基本面估值管线" color="#1890ff" onClick={triggerSyncFund} message={syncMsgFund} />
       <PipelineTaskCard title="🧬 复权因子管线" color="#faad14" onClick={triggerSyncAdj} message={syncMsgAdj} darkText />
       <PipelineTaskCard title="📊 大盘指数管线" color="#00d2ff" onClick={triggerSyncIndex} message={syncMsgIndex} darkText />
-      <PipelineTaskCard title="🌊 主力资金管线" color="#9c27b0" onClick={triggerSyncMoneyFlow} message={syncMsgMoney} />
+      <PipelineTaskCard title="🌊 资金流向管线" color="#9c27b0" onClick={triggerSyncMoneyFlow} message={syncMsgMoney} />
       <PipelineTaskCard title="🏦 季报财务数据" color="#5470c6" onClick={triggerSyncFina} message={syncMsgFina} advanced disabled={dataSource === 'opensource'} />
       <PipelineTaskCard title="🔥 涨跌停价格数据" color="#e01f54" onClick={triggerSyncLimit} message={syncMsgLimit} advanced disabled={dataSource === 'opensource'} />
+      <PipelineTaskCard title="🎰 筹码分布数据" color="#ff6f00" onClick={triggerSyncCyqPerf} message={syncMsgCyqPerf} advanced disabled={dataSource === 'opensource' || !enableProData} />
+      <PipelineTaskCard title="📈 技术因子专业版" color="#00bfa5" onClick={triggerSyncStkFactorPro} message={syncMsgStkFactorPro} advanced disabled={dataSource === 'opensource' || !enableProData} />
     </div>
   )
 }

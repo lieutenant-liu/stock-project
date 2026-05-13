@@ -198,6 +198,8 @@ func (m *Manager) run(triggerType, runDate string, cfg db.AutoSyncConfig, loc *t
 		errList = append(errList, "股票代码池为空，请先同步股票基础信息")
 	}
 
+	sysCfg, _ := db.GetSystemConfig()
+
 	steps := []struct {
 		name string
 		fn   func() feeder.SyncSummary
@@ -267,6 +269,17 @@ func (m *Manager) run(triggerType, runDate string, cfg db.AutoSyncConfig, loc *t
 			return feeder.StartSyncStkLimit(&feeder.TushareProvider{}, startDate, endDate)
 		}},
 		{name: "fina", fn: func() feeder.SyncSummary { return feeder.StartSyncFina(codes, startDate, endDate) }},
+	}
+
+	if sysCfg.EnableProData {
+		steps = append(steps, struct {
+			name string
+			fn   func() feeder.SyncSummary
+		}{name: "cyqperf", fn: func() feeder.SyncSummary { return feeder.StartSyncCyqPerf(codes, startDate, endDate) }})
+		steps = append(steps, struct {
+			name string
+			fn   func() feeder.SyncSummary
+		}{name: "stkfactorpro", fn: func() feeder.SyncSummary { return feeder.StartSyncStkFactorPro(codes, startDate, endDate) }})
 	}
 
 	// 每个步骤都先写入 step 记录，再执行，最后回填统计结果。

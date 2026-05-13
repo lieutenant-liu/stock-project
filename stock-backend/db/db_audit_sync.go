@@ -38,7 +38,7 @@ func RunDataAudit(tsCode, startDate, endDate string) AuditReport {
 		"daily_klines":       "📈 日线量价",
 		"daily_fundamentals": "💎 基本面估值",
 		"adj_factors":        "🧬 复权因子",
-		"daily_moneyflow":    "🌊 主力资金流",
+		"daily_moneyflow":    "🌊 资金流向",
 	}
 
 	for tableName, displayName := range tables {

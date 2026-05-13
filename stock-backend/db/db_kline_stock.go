@@ -38,7 +38,7 @@ func BatchInsertKLines(tsCode string, klines []tushare.DailyKLine) int {
 		WHERE excluded.trust_level >= daily_klines.trust_level
 	`)
 	if err != nil {
-		log.Println("预编译带血缘的SQL失败:", err)
+		log.Println("预编译带数据源的SQL失败:", err)
 		_ = tx.Rollback()
 		return 0
 	}

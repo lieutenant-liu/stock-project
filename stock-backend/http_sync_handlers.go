@@ -57,7 +57,7 @@ func updateSpeedHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	feeder.SetBaseDelay(speedMs)
-	respondOKMsg(w, fmt.Sprintf("引擎射速已更新为: %d 毫秒/发", speedMs))
+	respondOKMsg(w, fmt.Sprintf("引擎请求频率已更新为: %d 毫秒/发", speedMs))
 }
 
 func triggerSyncMoneyFlowHandler(w http.ResponseWriter, r *http.Request) {
@@ -69,7 +69,7 @@ func triggerSyncMoneyFlowHandler(w http.ResponseWriter, r *http.Request) {
 	targetTrust := trustLevelBySource(source)
 
 	go func() {
-		feeder.LogMsg("🌊 [抽水机E] 资金流向引擎启动！当前源:[%s]", provider.GetName())
+		feeder.LogMsg("🌊 [采集器E] 资金流向引擎启动！当前源:[%s]", provider.GetName())
 
 		for i, code := range codesToSync {
 			actualStart, actualEnd, needSync := db.GetDailySyncTaskRange("daily_moneyflow", code, start, end, targetTrust)
@@ -80,12 +80,12 @@ func triggerSyncMoneyFlowHandler(w http.ResponseWriter, r *http.Request) {
 			feeder.WaitToken()
 			flows, err := provider.FetchMoneyFlow(code, actualStart, actualEnd)
 			if err != nil {
-				feeder.LogMsg("⚠️ [抽水机E %d/%d] %s 报错: %v", i+1, len(codesToSync), code, err)
+				feeder.LogMsg("⚠️ [采集器E %d/%d] %s 报错: %v", i+1, len(codesToSync), code, err)
 			} else if len(flows) > 0 {
 				feeder.PushToSink("moneyflow", code, flows)
 			}
 		}
-		feeder.LogMsg("🎉 [抽水机E] 资金流向网络拉取完成！")
+		feeder.LogMsg("🎉 [采集器E] 资金流向网络拉取完成！")
 	}()
 	respondOKMsg(w, "资金流向管线已启动！")
 }
@@ -96,17 +96,17 @@ func triggerSyncFinaHandler(w http.ResponseWriter, r *http.Request) {
 	codesToSync := parseTargetCodes(r.URL.Query().Get("codes"))
 
 	go func() {
-		feeder.LogMsg("🏦 [抽水机F] 季报财务引擎启动！[Tushare专属]")
+		feeder.LogMsg("🏦 [采集器F] 季报财务引擎启动！[Tushare专属]")
 		for i, code := range codesToSync {
 			feeder.WaitToken()
 			finas, err := tushare.FetchFinaIndicators(code, start, end)
 			if err != nil {
-				feeder.LogMsg("⚠️ [抽水机F %d/%d] %s 报错: %v", i+1, len(codesToSync), code, err)
+				feeder.LogMsg("⚠️ [采集器F %d/%d] %s 报错: %v", i+1, len(codesToSync), code, err)
 			} else if len(finas) > 0 {
 				feeder.PushToSink("fina", code, finas)
 			}
 		}
-		feeder.LogMsg("🎉 [抽水机F] 季报财务拉取完成！")
+		feeder.LogMsg("🎉 [采集器F] 季报财务拉取完成！")
 	}()
 	respondOKMsg(w, "季报财务管线(高权)已启动！")
 }
@@ -243,7 +243,47 @@ func triggerSyncAdjHandler(w http.ResponseWriter, r *http.Request) {
 	provider := providerBySource(source)
 	go feeder.StartSyncAdjFactors(provider, codesToSync, startDate, endDate)
 
-	respondOKMsg(w, fmt.Sprintf("复权因子抽水机已启动！当前火力源: %s", provider.GetName()))
+	respondOKMsg(w, fmt.Sprintf("复权因子采集器已启动！当前数据源: %s", provider.GetName()))
+}
+
+func triggerSyncCyqPerfHandler(w http.ResponseWriter, r *http.Request) {
+	preparePublicJSON(w)
+
+	sysCfg, err := db.GetSystemConfig()
+	if err != nil {
+		respondInternalError(w, err)
+		return
+	}
+	if !sysCfg.EnableProData {
+		respondConflict(w, "高级数据功能已关闭，请在系统配置中启用后重试")
+		return
+	}
+
+	start, end := sanitizeDate(r.URL.Query().Get("start")), sanitizeDate(r.URL.Query().Get("end"))
+	codesToSync := parseTargetCodes(r.URL.Query().Get("codes"))
+
+	go feeder.StartSyncCyqPerf(codesToSync, start, end)
+	respondOKMsg(w, "筹码分布管线已启动！[Tushare 5000积分专属]")
+}
+
+func triggerSyncStkFactorProHandler(w http.ResponseWriter, r *http.Request) {
+	preparePublicJSON(w)
+
+	sysCfg, err := db.GetSystemConfig()
+	if err != nil {
+		respondInternalError(w, err)
+		return
+	}
+	if !sysCfg.EnableProData {
+		respondConflict(w, "高级数据功能已关闭，请在系统配置中启用后重试")
+		return
+	}
+
+	start, end := sanitizeDate(r.URL.Query().Get("start")), sanitizeDate(r.URL.Query().Get("end"))
+	codesToSync := parseTargetCodes(r.URL.Query().Get("codes"))
+
+	go feeder.StartSyncStkFactorPro(codesToSync, start, end)
+	respondOKMsg(w, "技术因子专业版管线已启动！[Tushare 5000积分专属]")
 }
 
 func triggerSyncIndexHandler(w http.ResponseWriter, r *http.Request) {
@@ -273,5 +313,5 @@ func triggerSyncIndexHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	respondOKMsg(w, "大盘指数抽水机已启动！")
+	respondOKMsg(w, "大盘指数采集器已启动！")
 }

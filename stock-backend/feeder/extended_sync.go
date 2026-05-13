@@ -9,7 +9,7 @@ import (
 func StartSyncMoneyFlow(provider DataProvider, stockCodes []string, start string, end string) SyncSummary {
 	total := len(stockCodes)
 	summary := SyncSummary{Module: "moneyflow", Total: total}
-	LogMsg("🌊 [抽水机E] 资金流向引擎启动！当前源:[%s]", provider.GetName())
+	LogMsg("🌊 [采集器E] 资金流向引擎启动！当前源:[%s]", provider.GetName())
 
 	targetTrust := 50
 	if provider.GetName() == "Tushare [高级]" {
@@ -36,7 +36,7 @@ func StartSyncMoneyFlow(provider DataProvider, stockCodes []string, start string
 		}
 
 		if err != nil {
-			LogMsg("⚠️ [抽水机E %d/%d] %s 报错: %v", i+1, total, code, err)
+			LogMsg("⚠️ [采集器E %d/%d] %s 报错: %v", i+1, total, code, err)
 			summary.Failed++
 			continue
 		}
@@ -49,14 +49,14 @@ func StartSyncMoneyFlow(provider DataProvider, stockCodes []string, start string
 		}
 	}
 
-	LogMsg("🎉 [抽水机E] 资金流向网络拉取完成！")
+	LogMsg("🎉 [采集器E] 资金流向网络拉取完成！")
 	return summary
 }
 
 func StartSyncFina(stockCodes []string, start string, end string) SyncSummary {
 	total := len(stockCodes)
 	summary := SyncSummary{Module: "fina", Total: total}
-	LogMsg("🏦 [抽水机F] 季报财务引擎启动！[Tushare专属]")
+	LogMsg("🏦 [采集器F] 季报财务引擎启动！[Tushare专属]")
 
 	for i, code := range stockCodes {
 		summary.Targeted++
@@ -72,7 +72,7 @@ func StartSyncFina(stockCodes []string, start string, end string) SyncSummary {
 		}
 
 		if err != nil {
-			LogMsg("⚠️ [抽水机F %d/%d] %s 报错: %v", i+1, total, code, err)
+			LogMsg("⚠️ [采集器F %d/%d] %s 报错: %v", i+1, total, code, err)
 			summary.Failed++
 			continue
 		}
@@ -85,7 +85,7 @@ func StartSyncFina(stockCodes []string, start string, end string) SyncSummary {
 		}
 	}
 
-	LogMsg("🎉 [抽水机F] 季报财务拉取完成！")
+	LogMsg("🎉 [采集器F] 季报财务拉取完成！")
 	return summary
 }
 
@@ -130,5 +130,90 @@ func StartSyncIndex(provider DataProvider, startDate, endDate string) SyncSummar
 	} else {
 		summary.Failed = 1
 	}
+	return summary
+}
+
+// StartSyncCyqPerf 同步筹码分布数据 (5000积分专属，per-stock per-date)
+func StartSyncCyqPerf(stockCodes []string, start, end string) SyncSummary {
+	total := len(stockCodes)
+	summary := SyncSummary{Module: "cyqperf", Total: total}
+	LogMsg("🎰 [采集器H] 筹码分布引擎启动！[Tushare 5000积分专属]")
+
+	for i, code := range stockCodes {
+		summary.Targeted++
+
+		// 获取该股票缺失的交易日列表
+		missingDates := db.GetStockMissingDates("cyq_perf_data", code, start, end)
+		if len(missingDates) == 0 {
+			summary.Skipped++
+			continue
+		}
+
+		var perfs []tushare.CyqPerf
+		for _, d := range missingDates {
+			WaitToken()
+			result, err := tushare.FetchCyqPerf(code, d)
+			if err != nil {
+				LogMsg("⚠️ [采集器H] %s %s 报错: %v", code, d, err)
+				time.Sleep(2 * time.Second)
+				summary.Failed++
+				continue
+			}
+			perfs = append(perfs, result...)
+		}
+
+		if len(perfs) > 0 {
+			PushToSink("cyqperf", code, perfs)
+			summary.Success++
+		}
+
+		if (i+1)%100 == 0 || i == total-1 {
+			LogMsg("🔄 [采集器H] 进度汇报: %d/%d 只股票", i+1, total)
+		}
+	}
+
+	LogMsg("🎉 [采集器H] 筹码分布拉取完成！")
+	return summary
+}
+
+// StartSyncStkFactorPro 同步技术因子专业版 (5000积分专属，per-stock per-date)
+func StartSyncStkFactorPro(stockCodes []string, start, end string) SyncSummary {
+	total := len(stockCodes)
+	summary := SyncSummary{Module: "stkfactorpro", Total: total}
+	LogMsg("📈 [采集器I] 技术因子专业版引擎启动！[Tushare 5000积分专属]")
+
+	for i, code := range stockCodes {
+		summary.Targeted++
+
+		missingDates := db.GetStockMissingDates("stk_factor_pro_data", code, start, end)
+		if len(missingDates) == 0 {
+			summary.Skipped++
+			continue
+		}
+
+		var factors []tushare.StkFactorPro
+		for _, d := range missingDates {
+			WaitToken()
+			result, err := tushare.FetchStkFactorPro(code, d)
+			if err != nil {
+				LogMsg("⚠️ [采集器I] %s %s 报错: %v", code, d, err)
+				time.Sleep(2 * time.Second)
+				summary.Failed++
+				continue
+			}
+			factors = append(factors, result...)
+		}
+
+		if len(factors) > 0 {
+			PushToSink("stkfactorpro", code, factors)
+			summary.Success++
+		}
+
+		if (i+1)%100 == 0 || i == total-1 {
+			LogMsg("🔄 [采集器I] 进度汇报: %d/%d 只股票", i+1, total)
+		}
+	}
+
+	LogMsg("🎉 [采集器I] 技术因子专业版拉取完成！")
 	return summary
 }

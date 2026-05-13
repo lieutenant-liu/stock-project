@@ -1,3 +1,5 @@
+import api from '../../../api/client'
+
 function PipelineConfigSection({
   inputCode,
   setInputCode,
@@ -15,6 +17,8 @@ function PipelineConfigSection({
   updateSpeed,
   triggerSyncCalendar,
   triggerSyncBasic,
+  enableProData,
+  setEnableProData,
 }) {
   return (
     <div style={{ marginBottom: '25px', backgroundColor: '#1e1e1e', padding: '15px 30px', borderRadius: '10px', display: 'inline-block', border: '1px solid #444', textAlign: 'left' }}>
@@ -70,6 +74,24 @@ function PipelineConfigSection({
           <div style={{ borderLeft: '1px solid #444', paddingLeft: '20px', display: 'flex', gap: '10px' }}>
             <button onClick={triggerSyncCalendar} style={{ padding: '6px 12px', backgroundColor: '#9c27b0', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>📅 同步交易日历</button>
             <button onClick={triggerSyncBasic} style={{ padding: '6px 12px', backgroundColor: '#e6a23c', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>📜 同步股票列表</button>
+          </div>
+
+          <div style={{ borderLeft: '1px solid #444', paddingLeft: '20px', display: 'flex', alignItems: 'center' }}>
+            <span style={{ color: '#888', marginRight: '10px', fontWeight: 'bold' }}>🔬 高级数据:</span>
+            <label style={{ cursor: 'pointer', color: enableProData ? '#00bfa5' : '#666', fontWeight: enableProData ? 'bold' : 'normal' }}>
+              <input
+                type="checkbox"
+                checked={enableProData}
+                onChange={async (e) => {
+                  const newVal = e.target.checked
+                  try {
+                    const res = await api.updateSystemConfig({ enable_pro_data: newVal })
+                    if (res.code === 200) setEnableProData(newVal)
+                  } catch {}
+                }}
+              />
+              {enableProData ? '已启用 (5000积分)' : '已禁用'}
+            </label>
           </div>
         </div>
       </div>

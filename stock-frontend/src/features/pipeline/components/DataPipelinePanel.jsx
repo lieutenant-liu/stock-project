@@ -22,6 +22,8 @@ function DataPipelinePanel(props) {
         updateSpeed={props.updateSpeed}
         triggerSyncCalendar={props.triggerSyncCalendar}
         triggerSyncBasic={props.triggerSyncBasic}
+        enableProData={props.enableProData}
+        setEnableProData={props.setEnableProData}
       />
 
       <PipelineTaskGrid
@@ -33,6 +35,8 @@ function DataPipelinePanel(props) {
         triggerSyncMoneyFlow={props.triggerSyncMoneyFlow}
         triggerSyncFina={props.triggerSyncFina}
         triggerSyncLimit={props.triggerSyncLimit}
+        triggerSyncCyqPerf={props.triggerSyncCyqPerf}
+        triggerSyncStkFactorPro={props.triggerSyncStkFactorPro}
         syncMsgKline={props.syncMsgKline}
         syncMsgFund={props.syncMsgFund}
         syncMsgAdj={props.syncMsgAdj}
@@ -40,6 +44,9 @@ function DataPipelinePanel(props) {
         syncMsgMoney={props.syncMsgMoney}
         syncMsgFina={props.syncMsgFina}
         syncMsgLimit={props.syncMsgLimit}
+        syncMsgCyqPerf={props.syncMsgCyqPerf}
+        syncMsgStkFactorPro={props.syncMsgStkFactorPro}
+        enableProData={props.enableProData}
       />
 
       <PipelineLogsSection sysLogs={props.sysLogs} />

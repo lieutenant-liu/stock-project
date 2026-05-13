@@ -19,6 +19,19 @@ func CalcMA(history []tushare.DailyKLine, days int) float64 {
 	return total / float64(days)
 }
 
+// CalcMAFromData 计算 IndexDaily 序列最近 N 天的收盘价均线。
+func CalcMAFromData(data []tushare.IndexDaily, days int) float64 {
+	if len(data) < days {
+		return 0
+	}
+	total := 0.0
+	start := len(data) - days
+	for i := start; i < len(data); i++ {
+		total += data[i].Close
+	}
+	return total / float64(days)
+}
+
 // CalcVolMA 计算指定位置前 N 天的成交量均线
 func CalcVolMA(history []tushare.DailyKLine, days int) float64 {
 	if len(history) < days {
@@ -186,7 +199,7 @@ func CheckBoxRegularity(history []tushare.DailyKLine, days int) bool {
 }
 
 // ==========================================
-// V3.3 宏观调整 2：主力试盘雷达 (寻找仙人指路或未遂涨停)
+// V3.3 宏观调整 2：资金试探检测 (寻找仙人指路或未遂涨停)
 // ==========================================
 func HasProbingAction(history []tushare.DailyKLine, boxUpper float64, lookbackDays int) bool {
 	if len(history) <= lookbackDays {
@@ -199,7 +212,7 @@ func HasProbingAction(history []tushare.DailyKLine, boxUpper float64, lookbackDa
 		// 2. 最高价曾极为逼近箱体上轨 (距离 < 3%)
 		// 3. 但最终没有形成有效突破 (收盘价被打回)
 		if k.PctChg > 8.0 && math.Abs(k.High-boxUpper)/boxUpper < 0.03 && k.Close <= boxUpper {
-			return true // 发现明确的主力试盘/洗盘痕迹！
+			return true // 发现明确的资金试探/洗盘痕迹！
 		}
 	}
 	return false

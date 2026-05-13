@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// FetchStockHistory 💥 责任链总控：东财(主力) -> 腾讯(灾备)
+// FetchStockHistory 💥 责任链总控：东财(资金) -> 腾讯(灾备)
 func FetchStockHistory(tsCode, startDate, endDate string) ([]tushare.DailyKLine, error) {
 	fmt.Printf("🕵️ [责任链] 节点 1: 尝试通过【东方财富 (Trust:50)】拉取 %s...\n", tsCode)
 	klines, err := fetchFromEastMoney(tsCode, startDate, endDate)
@@ -26,7 +26,7 @@ func FetchStockHistory(tsCode, startDate, endDate string) ([]tushare.DailyKLine,
 }
 
 // ==========================================
-// 🛡️ 节点 1：东方财富 (全字段主力，TrustLevel: 50)
+// 🛡️ 节点 1：东方财富 (全字段资金，TrustLevel: 50)
 // ==========================================
 func fetchFromEastMoney(tsCode, startDate, endDate string) ([]tushare.DailyKLine, error) {
 	secid := ""
@@ -92,7 +92,7 @@ func fetchFromEastMoney(tsCode, startDate, endDate string) ([]tushare.DailyKLine
 			Vol: vol, Amount: amount / 1000.0,
 			PctChg: pctChg, Change: change, PreClose: closePrice - change,
 
-			// 💥 注入血缘标记
+			// 💥 注入数据源标记
 			DataSource: "EASTMONEY",
 			TrustLevel: 50,
 		})
@@ -162,7 +162,7 @@ func fetchFromTencent(tsCode, startDate, endDate string) ([]tushare.DailyKLine, 
 			Open: open, Close: closePrice, High: high, Low: low,
 			Vol: vol, Amount: 0, // 腾讯缺成交额
 
-			// 💥 注入血缘标记 (底层兜底)
+			// 💥 注入数据源标记 (底层兜底)
 			DataSource: "TENCENT",
 			TrustLevel: 30,
 		})
@@ -171,11 +171,11 @@ func fetchFromTencent(tsCode, startDate, endDate string) ([]tushare.DailyKLine, 
 }
 
 // ==========================================
-// 💥 节点 1 扩编：高级战术情报 (指数与资金流向)
+// 💥 节点 1 扩编：高级扩展数据 (指数与资金流向)
 // ==========================================
 
 // FetchIndexDaily 拉取大盘指数 (逻辑与 K 线完全一致，只是映射不同)
-// 💥 FetchIndexDaily 责任链：东财(主力) -> 腾讯(灾备)
+// 💥 FetchIndexDaily 责任链：东财(资金) -> 腾讯(灾备)
 func FetchIndexDaily(tsCode, startDate, endDate string) ([]tushare.IndexDaily, error) {
 	indices, err := fetchIndexFromEastMoney(tsCode, startDate, endDate)
 	if err == nil && len(indices) > 0 {
@@ -237,7 +237,7 @@ func fetchIndexFromEastMoney(tsCode, startDate, endDate string) ([]tushare.Index
 		indices = append(indices, tushare.IndexDaily{
 			TSCode: tsCode, TradeDate: strings.ReplaceAll(fields[0], "-", ""),
 			Close: closePrice, Vol: vol, PctChg: pctChg,
-			// 💥 补全血缘：
+			// 💥 补全数据源：
 			DataSource: "EASTMONEY",
 			TrustLevel: 50,
 		})
@@ -300,7 +300,7 @@ func fetchIndexFromTencent(tsCode, startDate, endDate string) ([]tushare.IndexDa
 		indices = append(indices, tushare.IndexDaily{
 			TSCode: tsCode, TradeDate: dateStr,
 			Close: closePrice, Vol: vol, PctChg: 0, // 腾讯基础包不含涨跌幅，设为0兜底
-			// 💥 补全血缘：
+			// 💥 补全数据源：
 			DataSource: "TENCENT",
 			TrustLevel: 30,
 		})
@@ -308,7 +308,7 @@ func fetchIndexFromTencent(tsCode, startDate, endDate string) ([]tushare.IndexDa
 	return indices, nil
 }
 
-// FetchMoneyFlow 拉取主力资金流向 (东财 L2 核心接口)
+// FetchMoneyFlow 拉取资金资金流向 (东财 L2 核心接口)
 func FetchMoneyFlow(tsCode, startDate, endDate string) ([]tushare.DailyMoneyFlow, error) {
 	secid := ""
 	parts := strings.Split(tsCode, ".")
@@ -368,7 +368,7 @@ func FetchMoneyFlow(tsCode, startDate, endDate string) ([]tushare.DailyMoneyFlow
 			TSCode: tsCode, TradeDate: dateStr,
 			BuyLgVol: 0, SellLgVol: 0, BuyElgVol: 0, SellElgVol: 0,
 			NetMfVol: mainNet / 10000.0,
-			// 💥 补全血缘：
+			// 💥 补全数据源：
 			DataSource: "EASTMONEY",
 			TrustLevel: 50,
 		})
@@ -397,7 +397,7 @@ func fetchEastMoneyRaw(tsCode, startDate, endDate, fqt string) ([]tushare.DailyK
 	req, _ := http.NewRequest("GET", url, nil)
 	// req.Close = true
 	req.Header.Set("User-Agent", "Mozilla/5.0")
-	// 💥 注入全套高仿浏览器 Header，突破防爬墙
+	// 💥 注入全套高仿浏览器 Header，突破反爬限制
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36")
 	req.Header.Set("Referer", "http://quote.eastmoney.com/")
 	req.Header.Set("Accept", "application/json, text/plain, */*")
@@ -560,7 +560,7 @@ func FetchDailyBasic(tsCode, startDate, endDate string) ([]tushare.DailyFundamen
 			TotalMV: 0,
 			DVRatio: 0,
 
-			// 💥 注入血缘防线：标明这是东财的低权数据
+			// 💥 注入数据源校验：标明这是东财的低权数据
 			DataSource: "EASTMONEY",
 			TrustLevel: 50,
 		})

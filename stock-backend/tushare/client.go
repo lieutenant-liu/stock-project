@@ -10,9 +10,9 @@ import (
 	"time"
 )
 
-// 💥 废弃 hardcode const，启用并发安全的动态 Token 弹夹
+// 💥 废弃 hardcode const，启用并发安全的动态 Token 令牌池
 var (
-	currentToken = "a2fb17ef3159218fabee30c54f270a64b4e6a448252436e6b548da5c" // 默认底火
+	currentToken = "a2fb17ef3159218fabee30c54f270a64b4e6a448252436e6b548da5c" // 默认令牌
 	tokenMutex   sync.RWMutex
 )
 
@@ -111,7 +111,7 @@ func executeTushareRequest(reqBody TushareRequest) (TushareResponse, error) {
 	return tsResp, nil
 }
 
-// 💥 升级：11大金刚全字段
+// 💥 升级：11大字段全字段
 type DailyKLine struct {
 	TSCode    string  `json:"ts_code"`
 	TradeDate string  `json:"trade_date"`
@@ -125,7 +125,7 @@ type DailyKLine struct {
 	Vol       float64 `json:"vol"`
 	Amount    float64 `json:"amount"`
 	// ==========================================
-	// 💥 V2.2 数据血缘与治理字段
+	// 💥 V2.2 数据溯源与治理字段
 	DataSource string `json:"data_source"` // 数据源标记 (如 TUSHARE, EASTMONEY)
 	TrustLevel int    `json:"trust_level"` // 可信度权重 (如 100, 40)
 	// ==========================================
@@ -259,7 +259,7 @@ type DailyFundamental struct {
 	TotalMV      float64 `json:"total_mv"`      // 总市值 (万元)
 	TurnoverRate float64 `json:"turnover_rate"` // 换手率 (%)
 	DVRatio      float64 `json:"dv_ratio"`      // 股息率 (%)
-	// 💥 V2.2 数据血缘与治理字段
+	// 💥 V2.2 数据溯源与治理字段
 	DataSource string `json:"data_source"`
 	TrustLevel int    `json:"trust_level"`
 }
@@ -346,7 +346,7 @@ type AdjFactor struct {
 	TSCode     string  `json:"ts_code"`
 	TradeDate  string  `json:"trade_date"`
 	AdjFactor  float64 `json:"adj_factor"`
-	DataSource string  `json:"data_source"` // 💥 新增血缘
+	DataSource string  `json:"data_source"` // 数据溯源
 	TrustLevel int     `json:"trust_level"` // 💥 新增权重
 }
 
@@ -391,7 +391,7 @@ type FinaIndicator struct {
 	ROE          float64 `json:"roe"`
 	NetProfitYOY float64 `json:"netprofit_yoy"`
 	CFPS         float64 `json:"cfps"`
-	DataSource   string  `json:"data_source"` // 💥 新增血缘
+	DataSource   string  `json:"data_source"` // 数据溯源
 	TrustLevel   int     `json:"trust_level"` // 💥 新增权重
 }
 
@@ -447,7 +447,7 @@ type DailyMoneyFlow struct {
 	BuyElgVol  float64 `json:"buy_elg_vol"`
 	SellElgVol float64 `json:"sell_elg_vol"`
 	NetMfVol   float64 `json:"net_mf_vol"`
-	DataSource string  `json:"data_source"` // 💥 新增血缘
+	DataSource string  `json:"data_source"` // 数据溯源
 	TrustLevel int     `json:"trust_level"` // 💥 新增权重
 }
 
@@ -471,7 +471,7 @@ func FetchMoneyFlow(tsCode, startDate, endDate string) ([]DailyMoneyFlow, error)
 			TSCode: code, TradeDate: date,
 			BuyLgVol: parseFloat(item[2]), SellLgVol: parseFloat(item[3]),
 			BuyElgVol: parseFloat(item[4]), SellElgVol: parseFloat(item[5]), NetMfVol: parseFloat(item[6]),
-			// 💥 补全血缘：
+			// 💥 补全数据源：
 			DataSource: "TUSHARE",
 			TrustLevel: 100,
 		})
@@ -491,7 +491,7 @@ type StkLimit struct {
 	TrustLevel int     `json:"trust_level"`
 }
 
-// FetchStkLimit 拉取每日涨跌停绝对价格 (2000积分高射速版)
+// FetchStkLimit 拉取每日涨跌停绝对价格 (2000积分高请求频率版)
 func FetchStkLimit(tradeDate string) ([]StkLimit, error) {
 	reqBody := TushareRequest{
 		ApiName: "stk_limit", // 💥 官方正宗 2000 积分接口
@@ -508,7 +508,7 @@ func FetchStkLimit(tradeDate string) ([]StkLimit, error) {
 	var limits []StkLimit
 	for _, item := range tsResp.Data.Items {
 		if len(item) < 4 {
-			continue // 防脏数据装甲
+			continue // 防脏数据校验
 		}
 
 		date, _ := item[0].(string)
@@ -530,7 +530,7 @@ type IndexDaily struct {
 	Close      float64 `json:"close"`
 	Vol        float64 `json:"vol"`
 	PctChg     float64 `json:"pct_chg"`
-	DataSource string  `json:"data_source"` // 💥 新增血缘
+	DataSource string  `json:"data_source"` // 数据溯源
 	TrustLevel int     `json:"trust_level"` // 💥 新增权重
 }
 
@@ -553,12 +553,117 @@ func FetchIndexDaily(tsCode, startDate, endDate string) ([]IndexDaily, error) {
 		indices = append(indices, IndexDaily{
 			TSCode: code, TradeDate: date,
 			Close: parseFloat(item[2]), Vol: parseFloat(item[3]), PctChg: parseFloat(item[4]),
-			// 💥 补全血缘：
+			// 💥 补全数据源：
 			DataSource: "TUSHARE",
 			TrustLevel: 100,
 		})
 	}
 	return indices, nil
+}
+
+// ==========================================
+// 筹码分布 / 技术因子 (5000积分高阶接口)
+// ==========================================
+
+// CyqPerf 筹码分布及胜率指标
+type CyqPerf struct {
+	TSCode     string  `json:"ts_code"`
+	TradeDate  string  `json:"trade_date"`
+	ProfitPct  float64 `json:"profit_pct"`  // 获利比例 (%)
+	WinnerRate float64 `json:"winner_rate"` // 胜率
+	Cost5Pct   float64 `json:"cost_5pct"`   // 5%成本分位
+	Cost15Pct  float64 `json:"cost_15pct"`  // 15%成本分位
+	Cost50Pct  float64 `json:"cost_50pct"`  // 50%成本分位(中位数成本)
+	Cost85Pct  float64 `json:"cost_85pct"`  // 85%成本分位
+	WeightAvg  float64 `json:"weight_avg"`  // 加权平均成本
+	HisLow     float64 `json:"his_low"`     // 历史最低价
+	HisHigh    float64 `json:"his_high"`    // 历史最高价
+	DataSource string  `json:"data_source"`
+	TrustLevel int     `json:"trust_level"`
+}
+
+// FetchCyqPerf 拉取单只股票某日的筹码分布数据 (5000积分接口)
+func FetchCyqPerf(tsCode, tradeDate string) ([]CyqPerf, error) {
+	reqBody := TushareRequest{
+		ApiName: "cyq_perf",
+		Token:   GetToken(),
+		Params:  map[string]string{"ts_code": tsCode, "trade_date": tradeDate},
+		Fields:  "ts_code,trade_date,profit_pct,winner_rate,cost_5pct,cost_15pct,cost_50pct,cost_85pct,weight_avg,his_low,his_high",
+	}
+
+	tsResp, err := executeTushareRequest(reqBody)
+	if err != nil {
+		return nil, err
+	}
+
+	var perfs []CyqPerf
+	for _, item := range tsResp.Data.Items {
+		if len(item) < 11 {
+			continue
+		}
+		code, _ := item[0].(string)
+		date, _ := item[1].(string)
+		perfs = append(perfs, CyqPerf{
+			TSCode: code, TradeDate: date,
+			ProfitPct: parseFloat(item[2]), WinnerRate: parseFloat(item[3]),
+			Cost5Pct: parseFloat(item[4]), Cost15Pct: parseFloat(item[5]),
+			Cost50Pct: parseFloat(item[6]), Cost85Pct: parseFloat(item[7]),
+			WeightAvg: parseFloat(item[8]), HisLow: parseFloat(item[9]), HisHigh: parseFloat(item[10]),
+			DataSource: "TUSHARE", TrustLevel: 100,
+		})
+	}
+	return perfs, nil
+}
+
+// StkFactorPro 技术因子增强版
+type StkFactorPro struct {
+	TSCode     string  `json:"ts_code"`
+	TradeDate  string  `json:"trade_date"`
+	MACD       float64 `json:"macd"`
+	MACDSignal float64 `json:"macd_signal"`
+	MACDHist   float64 `json:"macd_hist"`
+	RSI6       float64 `json:"rsi_6"`
+	RSI12      float64 `json:"rsi_12"`
+	KDJ_K      float64 `json:"kdj_k"`
+	KDJ_D      float64 `json:"kdj_d"`
+	KDJ_J      float64 `json:"kdj_j"`
+	BollUpper  float64 `json:"boll_upper"`
+	BollLower  float64 `json:"boll_lower"`
+	DataSource string  `json:"data_source"`
+	TrustLevel int     `json:"trust_level"`
+}
+
+// FetchStkFactorPro 拉取单只股票某日的技术因子专业版 (5000积分接口)
+func FetchStkFactorPro(tsCode, tradeDate string) ([]StkFactorPro, error) {
+	reqBody := TushareRequest{
+		ApiName: "stk_factor_pro",
+		Token:   GetToken(),
+		Params:  map[string]string{"ts_code": tsCode, "trade_date": tradeDate},
+		Fields:  "ts_code,trade_date,macd,macd_signal,macd_hist,rsi_6,rsi_12,kdj_k,kdj_d,kdj_j,boll_upper,boll_lower",
+	}
+
+	tsResp, err := executeTushareRequest(reqBody)
+	if err != nil {
+		return nil, err
+	}
+
+	var factors []StkFactorPro
+	for _, item := range tsResp.Data.Items {
+		if len(item) < 12 {
+			continue
+		}
+		code, _ := item[0].(string)
+		date, _ := item[1].(string)
+		factors = append(factors, StkFactorPro{
+			TSCode: code, TradeDate: date,
+			MACD: parseFloat(item[2]), MACDSignal: parseFloat(item[3]), MACDHist: parseFloat(item[4]),
+			RSI6: parseFloat(item[5]), RSI12: parseFloat(item[6]),
+			KDJ_K: parseFloat(item[7]), KDJ_D: parseFloat(item[8]), KDJ_J: parseFloat(item[9]),
+			BollUpper: parseFloat(item[10]), BollLower: parseFloat(item[11]),
+			DataSource: "TUSHARE", TrustLevel: 100,
+		})
+	}
+	return factors, nil
 }
 
 // ExecuteTestRequest 导出内部请求执行器，供权限探测模块使用。

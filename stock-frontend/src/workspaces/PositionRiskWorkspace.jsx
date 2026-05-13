@@ -12,7 +12,8 @@ function PositionRiskWorkspace() {
     stock_name: '',
     hold_volume: 1000,
     cost_price: '',
-    buy_date: new Date().toISOString().split('T')[0]
+    buy_date: new Date().toISOString().split('T')[0],
+    strategy: ''
   })
 
   const loadPositions = async () => {
@@ -62,7 +63,8 @@ function PositionRiskWorkspace() {
       stock_name: posForm.stock_name.trim() || '未知',
       hold_volume: parseInt(posForm.hold_volume),
       cost_price: parseFloat(posForm.cost_price),
-      buy_date: posForm.buy_date.replace(/-/g, '')
+      buy_date: posForm.buy_date.replace(/-/g, ''),
+      strategy: posForm.strategy || ''
     }
 
     try {
@@ -94,8 +96,8 @@ function PositionRiskWorkspace() {
   }
 
   const getActionColor = (action) => {
-    if (action && (action.includes('减仓') || action.includes('止盈') || action.includes('清仓'))) return '#ef232a'
-    if (action && (action.includes('预警') || action.includes('待更新') || action.includes('警戒'))) return '#faad14'
+    if (action && (action.includes('卖出') || action.includes('止损') || action.includes('减仓') || action.includes('止盈') || action.includes('清仓'))) return '#ef232a'
+    if (action && (action.includes('待更新') || action.includes('预警') || action.includes('警戒'))) return '#faad14'
     if (action && (action.includes('待补齐') || action.includes('待补数据'))) return '#888888'
     return '#14b143'
   }

@@ -62,24 +62,8 @@ function BacktestConfigPanel({ config, setConfig, onRun, loading, result }) {
           </select>
         </div>
         <div style={fieldStyle}>
-          <label style={labelStyle}>止盈比例 (%)</label>
-          <input style={inputStyle} type="number" value={config.profit_take_pct} onChange={(e) => update('profit_take_pct', +e.target.value)} />
-        </div>
-        <div style={fieldStyle}>
           <label style={labelStyle}>手续费率</label>
           <input style={inputStyle} type="number" step="0.0001" value={config.commission} onChange={(e) => update('commission', +e.target.value)} />
-        </div>
-        <div style={{ ...fieldStyle, justifyContent: 'center' }}>
-          <label style={{ color: '#aaa', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
-            <input type="checkbox" checked={config.use_ma120_stop} onChange={(e) => update('use_ma120_stop', e.target.checked)} />
-            MA120止损
-          </label>
-        </div>
-        <div style={{ ...fieldStyle, justifyContent: 'center' }}>
-          <label style={{ color: '#aaa', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
-            <input type="checkbox" checked={config.use_box_stop} onChange={(e) => update('use_box_stop', e.target.checked)} />
-            箱体止损
-          </label>
         </div>
       </div>
       <div style={{ marginTop: '16px', display: 'flex', gap: '12px' }}>

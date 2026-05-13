@@ -11,9 +11,6 @@ const defaultConfig = {
   end_date: defaultRange.end,
   initial_capital: 100000,
   strategy: 'ALL',
-  profit_take_pct: 20,
-  use_ma120_stop: true,
-  use_box_stop: true,
   commission: 0.001,
   position_size_pct: 0.20,
 }
@@ -36,9 +33,6 @@ function BacktestWorkspace() {
         end_date: config.end_date.replace(/-/g, ''),
         initial_capital: config.initial_capital,
         strategy: config.strategy,
-        profit_take_pct: config.profit_take_pct,
-        use_ma120_stop: config.use_ma120_stop,
-        use_box_stop: config.use_box_stop,
         commission: config.commission,
         position_size_pct: config.position_size_pct,
       }

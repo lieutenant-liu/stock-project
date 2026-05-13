@@ -1,6 +1,6 @@
 package backtest
 
-import "stock-backend/tushare"
+import "stock-backend/strategy"
 
 // BacktestConfig 用户可配的回测参数。
 type BacktestConfig struct {
@@ -9,9 +9,6 @@ type BacktestConfig struct {
 	EndDate         string   `json:"end_date"`
 	InitialCapital  float64  `json:"initial_capital"`
 	Strategy        string   `json:"strategy"`
-	ProfitTakePct   float64  `json:"profit_take_pct"`
-	UseMA120Stop    bool     `json:"use_ma120_stop"`
-	UseBoxStop      bool     `json:"use_box_stop"`
 	Commission      float64  `json:"commission"`
 	PositionSizePct float64  `json:"position_size_pct"`
 }
@@ -54,8 +51,8 @@ type EquityPoint struct {
 	Value float64 `json:"value"`
 }
 
-// TheoreticalTrade Phase 1 产出的理论交易信号。
-// 包含持仓期间每日收盘价，供 Phase 2 做逐日盯市。
+// TheoreticalTrade Phase 1 产出的已闭环完整交易。
+// Phase 2 仅按 SellDate/SellPrice 执行资金回笼，不做任何判断。
 type TheoreticalTrade struct {
 	Code          string             `json:"code"`
 	BuyDate       string             `json:"buy_date"`
@@ -68,32 +65,28 @@ type TheoreticalTrade struct {
 	HoldingPrices map[string]float64 `json:"-"` // trade_date → Close，仅持仓期间
 }
 
-// position 当前持仓（引擎内部）。
-type position struct {
-	TSCode    string
-	BuyDate   string
-	BuyPrice  float64
-	Shares    int
-	Strategy  string
-	BuyReason string
+// ── Phase 1 内部状态结构（不导出）──
+
+// pendingSignal T+1 挂单买入（信号日产生，次日执行）。
+type pendingSignal struct {
+	code       string
+	signalDate string
+	strategy   string
+	reason     string
+	buyResult  strategy.DiagnoseResult // 买入时的完整诊断结果（含策略参数）
+	meta       map[string]float64      // EvaluateHold 所需的策略元数据
 }
 
-// pendingOrder T+1 挂单买入（信号日产生，次日执行）。
-type pendingOrder struct {
-	TSCode      string
-	SignalDate  string
-	Strategy    string
-	Reason      string
-	SignalPrice float64
-}
-
-// dailySnapshot 某个交易日全市场的截面数据（用完即释放）。
-type dailySnapshot struct {
-	KLines map[string]tushare.DailyKLine // tsCode → 当日K线(已复权)
-	Limits map[string]tushare.StkLimit   // tsCode → 当日涨跌停
-}
-
-// positionHistory 持仓股票的K线历史缓存（按需加载，逐步追加）。
-type positionHistory struct {
-	KLines []tushare.DailyKLine // 有序，从建仓前N天到昨天
+// holdState 当前持仓状态（买入后持续跟踪直到卖出）。
+type holdState struct {
+	buyDate           string
+	buyIdx            int
+	buyPrice          float64
+	strategy          string
+	reason            string
+	buyResult         strategy.DiagnoseResult
+	meta              map[string]float64
+	trailingStopArmed bool    // 已触发止损条件但因流动性不足无法执行，后续有流动性立即卖出
+	highWatermark     float64 // 持仓期间最高收盘价
+	stageBActive      bool    // 是否已激活阶段B (利润锁定，启用追踪止损)
 }

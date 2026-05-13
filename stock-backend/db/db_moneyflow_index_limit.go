@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// BatchInsertMoneyFlow 资金流向入库 (带血缘护盾)。
+// BatchInsertMoneyFlow 资金流向入库 (带数据源校验)。
 func BatchInsertMoneyFlow(tsCode string, flows []tushare.DailyMoneyFlow) int {
 	if len(flows) == 0 {
 		return 0
@@ -51,7 +51,7 @@ func BatchInsertMoneyFlow(tsCode string, flows []tushare.DailyMoneyFlow) int {
 	return insertCount
 }
 
-// BatchInsertIndexDaily 大盘指数入库 (带血缘护盾)。
+// BatchInsertIndexDaily 大盘指数入库 (带数据源校验)。
 func BatchInsertIndexDaily(tsCode string, indices []tushare.IndexDaily) int {
 	if len(indices) == 0 {
 		return 0
@@ -92,7 +92,7 @@ func BatchInsertIndexDaily(tsCode string, indices []tushare.IndexDaily) int {
 	return insertCount
 }
 
-// GetMoneyFlowFromDB 从本地 SQLite 提取主力资金流向数据。
+// GetMoneyFlowFromDB 从本地 SQLite 提取资金流向数据。
 func GetMoneyFlowFromDB(tsCode string, startDate string, endDate string) []tushare.DailyMoneyFlow {
 	var flows []tushare.DailyMoneyFlow
 	query := `
@@ -143,7 +143,7 @@ func GetIndexDailyFromDB(tsCode string, startDate string, endDate string) []tush
 	return indices
 }
 
-// BatchInsertStkLimit 涨跌停绝对价格入库 (带血缘护盾)。
+// BatchInsertStkLimit 涨跌停绝对价格入库 (带数据源校验)。
 func BatchInsertStkLimit(limits []tushare.StkLimit) int {
 	if len(limits) == 0 {
 		return 0
@@ -275,6 +275,34 @@ func GetMarketMissingDates(tableName, targetStart, targetEnd string) []string {
 
 	var missingDates []string
 	rows, err := DB.Query(query, targetStart, targetEnd, targetStart, targetEnd)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var d string
+			if rows.Scan(&d) == nil {
+				missingDates = append(missingDates, d)
+			}
+		}
+	}
+	return missingDates
+}
+
+// GetStockMissingDates 查询某只股票在指定表中的缺失日期列表。
+func GetStockMissingDates(tableName, tsCode, targetStart, targetEnd string) []string {
+	if targetStart == "" || targetEnd == "" {
+		return nil
+	}
+
+	query := fmt.Sprintf(`
+		SELECT cal_date FROM trade_calendar
+		WHERE is_open = 1 AND cal_date >= ? AND cal_date <= ?
+		AND cal_date NOT IN (
+			SELECT DISTINCT trade_date FROM %s WHERE ts_code = ? AND trade_date >= ? AND trade_date <= ?
+		) ORDER BY cal_date ASC
+	`, tableName)
+
+	var missingDates []string
+	rows, err := DB.Query(query, targetStart, targetEnd, tsCode, targetStart, targetEnd)
 	if err == nil {
 		defer rows.Close()
 		for rows.Next() {
