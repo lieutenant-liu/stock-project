@@ -429,13 +429,17 @@ func (d *DSSAnalyzer) EvaluateHold(pos *Position, today tushare.DailyKLine, hist
 
 // CheckMarketEnvironment 评估大盘环境与短线情绪。
 // 返回 (是否安全, 是否强势市场, 诊断报告)。
-// 强势市场 = 上证 Close > MA60，允许执行 MACB/CBBM 等右侧突破策略。
+// 强势市场必须同时满足三个条件（防伪三重验证）：
+// 1. 均线多头排列：Close > MA60 且 MA20 > MA60
+// 2. 均线斜率向上：MA60[today] >= MA60[today-3]
+// 3. 时间确认：连续 3 个交易日 Close > MA60
 func CheckMarketEnvironment(indices []tushare.IndexDaily, limitUpCount int, avgPremium float64) (bool, bool, string) {
 	if len(indices) < 25 {
 		return true, true, "大盘数据不足，全局风控默认放行。"
 	}
 
 	today := indices[len(indices)-1]
+	n := len(indices)
 
 	// 1. 暴跌风控：大盘单日暴跌
 	if today.PctChg <= -1.5 {
@@ -444,10 +448,10 @@ func CheckMarketEnvironment(indices []tushare.IndexDaily, limitUpCount int, avgP
 
 	// 2. 趋势风控：大盘跌破 20日线且向下拐头
 	var sum20, sumPrev20 float64
-	for i := len(indices) - 20; i < len(indices); i++ {
+	for i := n - 20; i < n; i++ {
 		sum20 += indices[i].Close
 	}
-	for i := len(indices) - 21; i < len(indices)-1; i++ {
+	for i := n - 21; i < n-1; i++ {
 		sumPrev20 += indices[i].Close
 	}
 	ma20 := sum20 / 20.0
@@ -468,12 +472,54 @@ func CheckMarketEnvironment(indices []tushare.IndexDaily, limitUpCount int, avgP
 		}
 	}
 
-	// 4. 强弱市场判断：上证 Close > MA60 为强势，否则为弱势
+	// =========================================================
+	// 4. 强弱市场判断：三重防伪验证
+	// =========================================================
 	strong := true
-	if len(indices) >= 60 {
+	strongReason := ""
+	if n < 63 {
+		strongReason = "数据不足63天，默认视为强势"
+	} else {
+		// 计算 MA60
 		ma60 := CalcMAFromData(indices, 60)
-		if ma60 > 0 && today.Close < ma60 {
-			strong = false
+
+		// 条件1：均线多头排列 — Close > MA60 且 MA20 > MA60
+		cond1 := today.Close > ma60 && ma20 > ma60
+
+		// 条件2：均线斜率向上 — MA60[today] >= MA60[today-3]
+		ma60ThreeDaysAgo := CalcMAFromData(indices[:n-3], 60)
+		cond2 := ma60 >= ma60ThreeDaysAgo
+
+		// 条件3：时间确认 — 连续 3 个交易日 Close > MA60
+		cond3 := true
+		for k := 1; k <= 3; k++ {
+			dayMA60 := CalcMAFromData(indices[:n-k], 60)
+			if indices[n-k].Close <= dayMA60 {
+				cond3 = false
+				break
+			}
+		}
+
+		strong = cond1 && cond2 && cond3
+
+		if !strong {
+			reasons := []string{}
+			if !cond1 {
+				reasons = append(reasons, fmt.Sprintf("均线未多头排列(Close%.0f MA20%.0f MA60%.0f)", today.Close, ma20, ma60))
+			}
+			if !cond2 {
+				reasons = append(reasons, fmt.Sprintf("MA60斜率下行(%.0f→%.0f)", ma60ThreeDaysAgo, ma60))
+			}
+			if !cond3 {
+				reasons = append(reasons, "未连续3日站稳MA60")
+			}
+			for i, r := range reasons {
+				if i == 0 {
+					strongReason = r
+				} else {
+					strongReason += "；" + r
+				}
+			}
 		}
 	}
 
@@ -487,7 +533,13 @@ func CheckMarketEnvironment(indices []tushare.IndexDaily, limitUpCount int, avgP
 		regimeTag = "弱势"
 	}
 
-	return true, strong, fmt.Sprintf("✅ 大盘与情绪健康 (指数涨跌: %.2f%%，%s，%s环境)，允许个股策略运行。", today.PctChg, premiumMsg, regimeTag)
+	detailMsg := ""
+	if strongReason != "" {
+		detailMsg = fmt.Sprintf(" [%s]", strongReason)
+	}
+
+	return true, strong, fmt.Sprintf("✅ 大盘与情绪健康 (指数涨跌: %.2f%%，%s，%s环境)%s，允许个股策略运行。",
+		today.PctChg, premiumMsg, regimeTag, detailMsg)
 }
 
 // ==========================================
