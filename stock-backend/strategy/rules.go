@@ -159,17 +159,14 @@ func (m *MACBAnalyzer) EvaluateHold(pos *Position, today tushare.DailyKLine, his
 
 	pePercentile := pos.BuyResult.PEPercentile
 
-	// 高估值模式 (PE > 60%): 严格止损 MA120 + 10% 止盈
+	// 高估值模式 (PE > 60%): 止损 MA120（利润由追踪止损守护，不设固定止盈）
 	if pePercentile > 0.60 {
 		ma120 := CalcMA(history, 120)
 		if ma120 > 0 && today.Close < ma120 {
 			return EvaluateHoldResult{Sell: true, Price: today.Close, Reason: "跌破动态MA120均线止损"}
 		}
-		if pos.BuyPrice > 0 && (today.Close-pos.BuyPrice)/pos.BuyPrice >= 0.10 {
-			return EvaluateHoldResult{Sell: true, Price: today.Close, Reason: "达到10%止盈目标"}
-		}
 	} else {
-		// 低估值模式: 止损 = min(MA30, MA60, MA120)，无固定止盈
+		// 低估值模式: 止损 = min(MA30, MA60, MA120)
 		ma30 := CalcMA(history, 30)
 		ma60 := CalcMA(history, 60)
 		ma120 := CalcMA(history, 120)
@@ -494,14 +491,50 @@ func CheckMarketEnvironment(indices []tushare.IndexDaily, limitUpCount int, avgP
 }
 
 // ==========================================
-// 全局硬止损：12% 动态追踪止损
+// 全局风控中心：ATR 自适应动态追踪止损 (V4.0)
 // ==========================================
 
-// CalcTrailingStopTrigger 计算追踪止损的触发价和当前 high watermark。
-// 不做任何流动性判断，纯计算。返回 (triggerPrice, highWatermark)。
-func CalcTrailingStopTrigger(history []tushare.DailyKLine, threshold float64) (float64, float64) {
-	if len(history) == 0 || threshold <= 0 {
-		return 0, 0
+// CalcATRStopPrice 计算 ATR 止损价格。
+// buyPrice: 买入价, atr: 买入时的基础 ATR, multiplier: ATR 倍数。
+func CalcATRStopPrice(buyPrice, atr, multiplier float64) float64 {
+	if buyPrice <= 0 || atr <= 0 || multiplier <= 0 {
+		return 0
+	}
+	return buyPrice - multiplier*atr
+}
+
+// CalcATRTrailingPrice 计算 ATR 追踪止损价格。
+// highWatermark: 持仓期间最高收盘价, atr: 买入时的基础 ATR, multiplier: ATR 倍数。
+func CalcATRTrailingPrice(highWatermark, atr, multiplier float64) float64 {
+	if highWatermark <= 0 || atr <= 0 || multiplier <= 0 {
+		return 0
+	}
+	return highWatermark - multiplier*atr
+}
+
+// IsATRTrailingStopTriggered 仅判断 ATR 追踪止损条件是否满足（今日最低价击穿止损线）。
+// 不做任何流动性/成交判断。用于调用方提前标记 trailingStopArmed。
+func IsATRTrailingStopTriggered(today tushare.DailyKLine, history []tushare.DailyKLine, atr, multiplier float64) bool {
+	if len(history) == 0 || atr <= 0 {
+		return false
+	}
+	highWatermark := 0.0
+	for _, k := range history {
+		if k.Close > highWatermark {
+			highWatermark = k.Close
+		}
+	}
+	triggerPrice := CalcATRTrailingPrice(highWatermark, atr, multiplier)
+	return triggerPrice > 0 && today.Low <= triggerPrice
+}
+
+// CheckATRTrailingStop 检查 ATR 追踪止损，并模拟真实 A 股流动性摩擦。
+// history 应为从买入日到当前日的完整 K 线（含两端）。
+// atr 为买入时的基础 ATR 值，multiplier 为 ATR 倍数。
+// 返回 (是否实际成交卖出, 成交价格, 原因)。
+func CheckATRTrailingStop(today tushare.DailyKLine, history []tushare.DailyKLine, atr, multiplier float64) (bool, float64, string) {
+	if len(history) == 0 || atr <= 0 {
+		return false, 0, ""
 	}
 	highWatermark := 0.0
 	for _, k := range history {
@@ -510,35 +543,17 @@ func CalcTrailingStopTrigger(history []tushare.DailyKLine, threshold float64) (f
 		}
 	}
 	if highWatermark <= 0 {
-		return 0, 0
-	}
-	return highWatermark * (1 - threshold), highWatermark
-}
-
-// IsTrailingStopTriggered 仅判断止损条件是否满足（今日最低价击穿止损线）。
-// 不做任何流动性/成交判断。用于调用方提前标记 trailingStopArmed。
-func IsTrailingStopTriggered(today tushare.DailyKLine, history []tushare.DailyKLine, threshold float64) bool {
-	triggerPrice, _ := CalcTrailingStopTrigger(history, threshold)
-	return triggerPrice > 0 && today.Low <= triggerPrice
-}
-
-// CheckTrailingStop 检查是否触发从最高价回撤的硬性追踪止损，并模拟真实 A 股流动性摩擦。
-// 三种场景：跳空低开以开盘价成交、一字跌停拒绝卖出、盘中触及以止损价成交。
-// history 应为从买入日到当前日的完整 K 线（含两端）。
-// threshold 为回撤比例阈值（如 0.12 表示 12%）。
-// 返回 (是否实际成交卖出, 成交价格, 原因)。
-func CheckTrailingStop(today tushare.DailyKLine, history []tushare.DailyKLine, threshold float64) (bool, float64, string) {
-	triggerPrice, highWatermark := CalcTrailingStopTrigger(history, threshold)
-	if triggerPrice <= 0 {
 		return false, 0, ""
 	}
+
+	triggerPrice := CalcATRTrailingPrice(highWatermark, atr, multiplier)
 
 	// 今天最低价都高于止损线 → 未触发
 	if today.Low > triggerPrice {
 		return false, 0, ""
 	}
 
-	// 一字跌停无流动性 — 拒绝卖出（调用方应通过 IsTrailingStopTriggered 提前设 trailingStopArmed）
+	// 一字跌停无流动性 — 拒绝卖出
 	isLimitDownLocked := today.High == today.Low || today.Vol == 0
 	if isLimitDownLocked {
 		return false, 0, ""
@@ -546,23 +561,23 @@ func CheckTrailingStop(today tushare.DailyKLine, history []tushare.DailyKLine, t
 
 	// 跳空低开直接击穿止损线 — 以开盘价成交
 	if today.Open < triggerPrice {
-		return true, today.Open, fmt.Sprintf("跳空低开触发 %.0f%% 止损（最高价 %.2f，开盘击穿止损线 %.2f，成交 %.2f）",
-			threshold*100, highWatermark, triggerPrice, today.Open)
+		return true, today.Open, fmt.Sprintf("跳空低开触发 ATR%.1fx 追踪止损（最高价 %.2f，ATR %.2f，止损线 %.2f，开盘击穿成交 %.2f）",
+			multiplier, highWatermark, atr, triggerPrice, today.Open)
 	}
 
 	// 盘中正常触及止损位 — 以止损价成交
-	return true, triggerPrice, fmt.Sprintf("盘中触发 %.0f%% 止损（最高价 %.2f → 止损线 %.2f，当日最低 %.2f）",
-		threshold*100, highWatermark, triggerPrice, today.Low)
+	return true, triggerPrice, fmt.Sprintf("盘中触发 ATR%.1fx 追踪止损（最高价 %.2f → 止损线 %.2f，ATR %.2f，当日最低 %.2f）",
+		multiplier, highWatermark, triggerPrice, atr, today.Low)
 }
 
-// CheckHardStop 检查从买入价算起的绝对硬止损（阶段A使用）。
-// threshold 为跌幅阈值（如 0.08 表示 -8%）。
+// CheckATRHardStop 检查从买入价算起的 ATR 硬止损（阶段A使用）。
+// atr 为买入时的基础 ATR 值，multiplier 为 ATR 倍数。
 // 返回 (是否触发, 成交价格, 原因)。
-func CheckHardStop(today tushare.DailyKLine, buyPrice, threshold float64) (bool, float64, string) {
-	if buyPrice <= 0 || threshold <= 0 {
+func CheckATRHardStop(today tushare.DailyKLine, buyPrice, atr, multiplier float64) (bool, float64, string) {
+	if buyPrice <= 0 || atr <= 0 || multiplier <= 0 {
 		return false, 0, ""
 	}
-	stopPrice := buyPrice * (1 - threshold)
+	stopPrice := CalcATRStopPrice(buyPrice, atr, multiplier)
 
 	// 今日最低价都高于止损线 → 未触发
 	if today.Low > stopPrice {
@@ -577,13 +592,13 @@ func CheckHardStop(today tushare.DailyKLine, buyPrice, threshold float64) (bool,
 
 	// 跳空低开直接击穿止损线 — 以开盘价成交
 	if today.Open < stopPrice {
-		return true, today.Open, fmt.Sprintf("跳空低开触发 %.0f%% 硬止损（买入价 %.2f，止损线 %.2f，开盘击穿成交 %.2f）",
-			threshold*100, buyPrice, stopPrice, today.Open)
+		return true, today.Open, fmt.Sprintf("跳空低开触发 ATR%.1fx 硬止损（买入价 %.2f，ATR %.2f，止损线 %.2f，开盘击穿成交 %.2f）",
+			multiplier, buyPrice, atr, stopPrice, today.Open)
 	}
 
 	// 盘中正常触及止损位 — 以止损价成交
-	return true, stopPrice, fmt.Sprintf("盘中触发 %.0f%% 硬止损（买入价 %.2f → 止损线 %.2f，当日最低 %.2f）",
-		threshold*100, buyPrice, stopPrice, today.Low)
+	return true, stopPrice, fmt.Sprintf("盘中触发 ATR%.1fx 硬止损（买入价 %.2f，ATR %.2f → 止损线 %.2f，当日最低 %.2f）",
+		multiplier, buyPrice, atr, stopPrice, today.Low)
 }
 
 // ==========================================

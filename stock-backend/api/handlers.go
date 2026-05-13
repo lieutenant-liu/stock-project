@@ -441,6 +441,12 @@ func PositionRiskHandler(w http.ResponseWriter, r *http.Request) {
 			buyIdx = 0
 		}
 
+		// 计算买入时的基础 ATR（用于自适应止损）
+		buyATR := 0.0
+		if buyIdx >= 14 {
+			buyATR = strategy.CalcATR(historyData[:buyIdx+1], 14)
+		}
+
 		// 5. 查找对应的策略 Analyzer
 		analyzer, found := analyzerMap[pos.Strategy]
 		if !found || pos.Strategy == "" {
@@ -448,17 +454,22 @@ func PositionRiskHandler(w http.ResponseWriter, r *http.Request) {
 			action := "🟢 继续持有"
 			reason := "未关联策略引擎，请手动评估。"
 
-			// 12% 硬性追踪止损（即使未关联策略也生效）
+			// ATR 自适应追踪止损（即使未关联策略也生效）
 			holdingHistory := historyData[buyIdx:]
-			if triggered, _, trailReason := strategy.CheckTrailingStop(today, holdingHistory, 0.12); triggered {
-				action = "🔴 触发动态硬止损"
-				reason = trailReason
-			} else if strategy.IsTrailingStopTriggered(today, holdingHistory, 0.12) {
-				action = "⚠️ 触发止损但跌停无法卖出"
-				reason = "12% 止损条件已满足，但当前处于跌停状态无法成交，需等待跌停打开后立即卖出。"
-			} else if profitPct <= -8.0 {
-				action = "🔴 建议止损"
-				reason = fmt.Sprintf("浮亏 %.2f%%，已超过 -8%% 止损线。", profitPct)
+			if buyATR > 0 {
+				if triggered, _, trailReason := strategy.CheckATRTrailingStop(today, holdingHistory, buyATR, 2.5); triggered {
+					action = "🔴 触发 ATR 追踪止损"
+					reason = trailReason
+				} else if strategy.IsATRTrailingStopTriggered(today, holdingHistory, buyATR, 2.5) {
+					action = "⚠️ 触发止损但跌停无法卖出"
+					reason = "ATR 追踪止损条件已满足，但当前处于跌停状态无法成交，需等待跌停打开后立即卖出。"
+				}
+			}
+			if action == "🟢 继续持有" && buyATR > 0 {
+				if triggered, _, hardReason := strategy.CheckATRHardStop(today, pos.CostPrice, buyATR, 2.0); triggered {
+					action = "🔴 触发 ATR 硬止损"
+					reason = hardReason
+				}
 			}
 			reports = append(reports, buildPositionReport(pos, displayName, currentPrice, profitPct, retracement, highWatermark, action, reason, "ok", dataTradeDate, latestMarketDate))
 			continue
@@ -477,21 +488,25 @@ func PositionRiskHandler(w http.ResponseWriter, r *http.Request) {
 			BuyResult: strategy.DiagnoseResult{PEPercentile: 0.5},
 		}
 
-		// 8. 两阶段动态止损（与回测完全一致）
+		// 8. 两阶段 ATR 动态止损（与回测完全一致）
 		holdingHistory := historyData[buyIdx:]
 		maxGainPct := (highWatermark - pos.CostPrice) / pos.CostPrice * 100
-		stageBActive := maxGainPct >= 15.0
+		atrPct := 0.0
+		if pos.CostPrice > 0 && buyATR > 0 {
+			atrPct = buyATR / pos.CostPrice * 100
+		}
+		stageBActive := atrPct > 0 && maxGainPct >= 2.0*atrPct
 
 		var stopTriggered, stopConditionMet bool
 		var stopReason string
 
 		if stageBActive {
-			// 阶段B：利润锁定期，启用12%高水位追踪止损
-			stopTriggered, _, stopReason = strategy.CheckTrailingStop(today, holdingHistory, 0.12)
-			stopConditionMet = !stopTriggered && strategy.IsTrailingStopTriggered(today, holdingHistory, 0.12)
+			// 阶段B：利润锁定期，启用 2.5x ATR 高水位追踪止损
+			stopTriggered, _, stopReason = strategy.CheckATRTrailingStop(today, holdingHistory, buyATR, 2.5)
+			stopConditionMet = !stopTriggered && strategy.IsATRTrailingStopTriggered(today, holdingHistory, buyATR, 2.5)
 		} else {
-			// 阶段A：利润缓冲期，仅执行-8%绝对硬止损
-			stopTriggered, _, stopReason = strategy.CheckHardStop(today, pos.CostPrice, 0.08)
+			// 阶段A：洗盘容忍期，执行 2x ATR 硬止损
+			stopTriggered, _, stopReason = strategy.CheckATRHardStop(today, pos.CostPrice, buyATR, 2.0)
 			stopConditionMet = false // 硬止损无armed状态
 		}
 
@@ -504,14 +519,14 @@ func PositionRiskHandler(w http.ResponseWriter, r *http.Request) {
 			stageTag = "B"
 		}
 		action := fmt.Sprintf("🟢 策略持仓中 [阶段%s]", stageTag)
-		reason := fmt.Sprintf("策略 [%s] 持仓评估通过，当前价格 %.2f，最大浮盈 %.1f%%。", pos.Strategy, currentPrice, maxGainPct)
+		reason := fmt.Sprintf("策略 [%s] 持仓评估通过，当前价格 %.2f，最大浮盈 %.1f%%，ATR %.2f。", pos.Strategy, currentPrice, maxGainPct, buyATR)
 		status := "ok"
 
 		if stopTriggered {
 			if stageBActive {
-				action = "🔴 触发动态追踪止损"
+				action = "🔴 触发 ATR 追踪止损"
 			} else {
-				action = "🔴 触发-8%硬止损"
+				action = "🔴 触发 ATR 硬止损"
 			}
 			reason = stopReason
 			status = "sell_signal"

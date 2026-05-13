@@ -89,4 +89,5 @@ type holdState struct {
 	trailingStopArmed bool    // 已触发止损条件但因流动性不足无法执行，后续有流动性立即卖出
 	highWatermark     float64 // 持仓期间最高收盘价
 	stageBActive      bool    // 是否已激活阶段B (利润锁定，启用追踪止损)
+	buyATR            float64 // 买入时的基础 ATR 值 (用于自适应止损)
 }

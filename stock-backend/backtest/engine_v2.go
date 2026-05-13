@@ -194,6 +194,12 @@ func mineStockSignals(
 			shares := (maxShares / 100) * 100
 
 			if shares >= 100 {
+				// 计算买入时的基础 ATR（用于自适应止损）
+				buyATR := 0.0
+				if i >= 14 {
+					buyATR = strategy.CalcATR(klines[:i+1], 14)
+				}
+
 				hold = &holdState{
 					buyDate:   todayDate,
 					buyIdx:    i,
@@ -202,6 +208,7 @@ func mineStockSignals(
 					reason:    pending.reason,
 					buyResult: pending.buyResult,
 					meta:      pending.meta,
+					buyATR:    buyATR,
 				}
 			}
 			pending = nil
@@ -230,30 +237,34 @@ func mineStockSignals(
 				continue // 一字跌停，继续武装，跳过本日
 			}
 
-			// 计算最大浮盈比例，决定是否激活阶段B
+			// 计算最大浮盈比例，决定是否激活阶段B（2x ATR 为阈值）
 			maxGainPct := (hold.highWatermark - hold.buyPrice) / hold.buyPrice * 100
-			if maxGainPct >= 15.0 {
+			atrPct := 0.0
+			if hold.buyPrice > 0 && hold.buyATR > 0 {
+				atrPct = hold.buyATR / hold.buyPrice * 100
+			}
+			if atrPct > 0 && maxGainPct >= 2.0*atrPct {
 				hold.stageBActive = true
 			}
 
 			holdingHistory := klines[hold.buyIdx : i+1]
 
 			if hold.stageBActive {
-				// 阶段B：利润锁定期，启用12%高水位追踪止损
-				if strategy.IsTrailingStopTriggered(today, holdingHistory, 0.12) {
+				// 阶段B：利润锁定期，启用 2.5x ATR 高水位追踪止损
+				if strategy.IsATRTrailingStopTriggered(today, holdingHistory, hold.buyATR, 2.5) {
 					if today.High == today.Low || today.Vol == 0 {
 						hold.trailingStopArmed = true
 						continue // 跌停锁死，等明天
 					}
-					if ok, sellPrice, reason := strategy.CheckTrailingStop(today, holdingHistory, 0.12); ok {
+					if ok, sellPrice, reason := strategy.CheckATRTrailingStop(today, holdingHistory, hold.buyATR, 2.5); ok {
 						trades = append(trades, buildClosedTrade(code, hold, i, sellPrice, reason, klines))
 						hold = nil
 						continue // 【核心修复】：必须跳过本日
 					}
 				}
 			} else {
-				// 阶段A：利润缓冲期，仅执行-8%绝对硬止损
-				if ok, sellPrice, reason := strategy.CheckHardStop(today, hold.buyPrice, 0.08); ok {
+				// 阶段A：洗盘容忍期，执行 2x ATR 硬止损
+				if ok, sellPrice, reason := strategy.CheckATRHardStop(today, hold.buyPrice, hold.buyATR, 2.0); ok {
 					trades = append(trades, buildClosedTrade(code, hold, i, sellPrice, reason, klines))
 					hold = nil
 					continue
