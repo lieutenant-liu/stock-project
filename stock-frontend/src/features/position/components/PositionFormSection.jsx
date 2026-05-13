@@ -27,6 +27,7 @@ function PositionFormSection({ posForm, setPosForm, handleAddPosition }) {
           <option value="">未关联</option>
           <option value="MACB 均线收敛突破 (MACB)">MACB 均线收敛</option>
           <option value="CBBM 中枢强势突破 (CBBM)">CBBM 中枢突破</option>
+          <option value="PBMA 缩量回踩狙击 (PBMA)">PBMA 缩量回踩</option>
         </select>
       </div>
       <button onClick={handleAddPosition} style={{ padding: '9px 20px', backgroundColor: '#e01f54', color: '#fff', border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer', boxShadow: '0 2px 8px rgba(224,31,84,0.4)' }}>

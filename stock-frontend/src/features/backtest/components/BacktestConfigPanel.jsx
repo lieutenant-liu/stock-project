@@ -59,6 +59,7 @@ function BacktestConfigPanel({ config, setConfig, onRun, loading, result }) {
             <option value="ALL">全部策略</option>
             <option value="MACB">MACB 均线收敛突破</option>
             <option value="CBBM">CBBM 中枢强势突破</option>
+            <option value="PBMA">PBMA 缩量回踩狙击</option>
           </select>
         </div>
         <div style={fieldStyle}>

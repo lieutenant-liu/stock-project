@@ -11,11 +11,19 @@ function StrategyResultCard({ stock }) {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
           <h2 style={{ margin: 0, color: '#fff' }}>{stock.name && stock.name !== '未知' ? `${stock.name} (${stock.code})` : stock.code}</h2>
-          {stock.strategy_name && (
-            <span style={{ backgroundColor: '#5470c6', color: '#fff', padding: '4px 10px', borderRadius: '4px', fontSize: '0.85rem', fontWeight: 'bold' }}>
-              {stock.strategy_name}
-            </span>
-          )}
+          {stock.strategy_name && (() => {
+            const strategyColors = {
+              '均线收敛突破 (MACB)': '#c23531',
+              '中枢强势突破 (CBBM)': '#5470c6',
+              '缩量回踩狙击 (PBMA)': '#00bfa5',
+            }
+            const tagColor = strategyColors[stock.strategy_name] || '#5470c6'
+            return (
+              <span style={{ backgroundColor: tagColor, color: '#fff', padding: '4px 10px', borderRadius: '4px', fontSize: '0.85rem', fontWeight: 'bold' }}>
+                {stock.strategy_name}
+              </span>
+            )
+          })()}
         </div>
         <h2 style={{ margin: 0, color: mainColor }}>¥{Number(stock.latest_price || 0).toFixed(2)}</h2>
       </div>
