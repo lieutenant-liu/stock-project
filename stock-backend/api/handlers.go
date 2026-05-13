@@ -454,20 +454,18 @@ func PositionRiskHandler(w http.ResponseWriter, r *http.Request) {
 			action := "🟢 继续持有"
 			reason := "未关联策略引擎，请手动评估。"
 
-			// ATR 自适应追踪止损（即使未关联策略也生效）
+			// 追踪止损（即使未关联策略也生效）
 			holdingHistory := historyData[buyIdx:]
-			if buyATR > 0 {
-				if triggered, _, trailReason := strategy.CheckATRTrailingStop(today, holdingHistory, buyATR, 2.5); triggered {
-					action = "🔴 触发 ATR 追踪止损"
-					reason = trailReason
-				} else if strategy.IsATRTrailingStopTriggered(today, holdingHistory, buyATR, 2.5) {
-					action = "⚠️ 触发止损但跌停无法卖出"
-					reason = "ATR 追踪止损条件已满足，但当前处于跌停状态无法成交，需等待跌停打开后立即卖出。"
-				}
+			if triggered, _, trailReason := strategy.CheckTrailingStop(today, holdingHistory, buyATR, 2.5, 0.12); triggered {
+				action = "🔴 触发追踪止损"
+				reason = trailReason
+			} else if strategy.IsTrailingStopTriggered(today, holdingHistory, buyATR, 2.5, 0.12) {
+				action = "⚠️ 触发止损但跌停无法卖出"
+				reason = "追踪止损条件已满足，但当前处于跌停状态无法成交，需等待跌停打开后立即卖出。"
 			}
-			if action == "🟢 继续持有" && buyATR > 0 {
-				if triggered, _, hardReason := strategy.CheckATRHardStop(today, pos.CostPrice, buyATR, 2.0); triggered {
-					action = "🔴 触发 ATR 硬止损"
+			if action == "🟢 继续持有" {
+				if triggered, _, hardReason := strategy.CheckHardStop(today, pos.CostPrice, 0.10); triggered {
+					action = "🔴 触发-10%硬止损"
 					reason = hardReason
 				}
 			}
@@ -488,26 +486,22 @@ func PositionRiskHandler(w http.ResponseWriter, r *http.Request) {
 			BuyResult: strategy.DiagnoseResult{PEPercentile: 0.5},
 		}
 
-		// 8. 两阶段 ATR 动态止损（与回测完全一致）
+		// 8. 两阶段动态止损（与回测完全一致）
 		holdingHistory := historyData[buyIdx:]
 		maxGainPct := (highWatermark - pos.CostPrice) / pos.CostPrice * 100
-		atrPct := 0.0
-		if pos.CostPrice > 0 && buyATR > 0 {
-			atrPct = buyATR / pos.CostPrice * 100
-		}
-		stageBActive := atrPct > 0 && maxGainPct >= 2.0*atrPct
+		stageBActive := maxGainPct >= 15.0
 
 		var stopTriggered, stopConditionMet bool
 		var stopReason string
 
 		if stageBActive {
-			// 阶段B：利润锁定期，启用 2.5x ATR 高水位追踪止损
-			stopTriggered, _, stopReason = strategy.CheckATRTrailingStop(today, holdingHistory, buyATR, 2.5)
-			stopConditionMet = !stopTriggered && strategy.IsATRTrailingStopTriggered(today, holdingHistory, buyATR, 2.5)
+			// 阶段B：利润锁定期，启用 Max(2.5*ATR, 12%) 追踪止损
+			stopTriggered, _, stopReason = strategy.CheckTrailingStop(today, holdingHistory, buyATR, 2.5, 0.12)
+			stopConditionMet = !stopTriggered && strategy.IsTrailingStopTriggered(today, holdingHistory, buyATR, 2.5, 0.12)
 		} else {
-			// 阶段A：洗盘容忍期，执行 2x ATR 硬止损
-			stopTriggered, _, stopReason = strategy.CheckATRHardStop(today, pos.CostPrice, buyATR, 2.0)
-			stopConditionMet = false // 硬止损无armed状态
+			// 阶段A：宽幅护底期，执行 -10% 硬止损
+			stopTriggered, _, stopReason = strategy.CheckHardStop(today, pos.CostPrice, 0.10)
+			stopConditionMet = false
 		}
 
 		// 9. 调用策略 EvaluateHold（与回测完全一致的卖出判断）
@@ -524,9 +518,9 @@ func PositionRiskHandler(w http.ResponseWriter, r *http.Request) {
 
 		if stopTriggered {
 			if stageBActive {
-				action = "🔴 触发 ATR 追踪止损"
+				action = "🔴 触发追踪止损"
 			} else {
-				action = "🔴 触发 ATR 硬止损"
+				action = "🔴 触发-10%硬止损"
 			}
 			reason = stopReason
 			status = "sell_signal"

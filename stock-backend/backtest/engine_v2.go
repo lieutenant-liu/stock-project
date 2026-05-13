@@ -237,34 +237,30 @@ func mineStockSignals(
 				continue // 一字跌停，继续武装，跳过本日
 			}
 
-			// 计算最大浮盈比例，决定是否激活阶段B（2x ATR 为阈值）
+			// 阶段判定：最大浮盈达到 15% 前为阶段A，达到后为阶段B
 			maxGainPct := (hold.highWatermark - hold.buyPrice) / hold.buyPrice * 100
-			atrPct := 0.0
-			if hold.buyPrice > 0 && hold.buyATR > 0 {
-				atrPct = hold.buyATR / hold.buyPrice * 100
-			}
-			if atrPct > 0 && maxGainPct >= 2.0*atrPct {
+			if maxGainPct >= 15.0 {
 				hold.stageBActive = true
 			}
 
 			holdingHistory := klines[hold.buyIdx : i+1]
 
 			if hold.stageBActive {
-				// 阶段B：利润锁定期，启用 2.5x ATR 高水位追踪止损
-				if strategy.IsATRTrailingStopTriggered(today, holdingHistory, hold.buyATR, 2.5) {
+				// 阶段B：利润锁定期，启用 Max(2.5*ATR, 12%) 追踪止损
+				if strategy.IsTrailingStopTriggered(today, holdingHistory, hold.buyATR, 2.5, 0.12) {
 					if today.High == today.Low || today.Vol == 0 {
 						hold.trailingStopArmed = true
 						continue // 跌停锁死，等明天
 					}
-					if ok, sellPrice, reason := strategy.CheckATRTrailingStop(today, holdingHistory, hold.buyATR, 2.5); ok {
+					if ok, sellPrice, reason := strategy.CheckTrailingStop(today, holdingHistory, hold.buyATR, 2.5, 0.12); ok {
 						trades = append(trades, buildClosedTrade(code, hold, i, sellPrice, reason, klines))
 						hold = nil
 						continue // 【核心修复】：必须跳过本日
 					}
 				}
 			} else {
-				// 阶段A：洗盘容忍期，执行 2x ATR 硬止损
-				if ok, sellPrice, reason := strategy.CheckATRHardStop(today, hold.buyPrice, hold.buyATR, 2.0); ok {
+				// 阶段A：宽幅护底期，执行 -10% 硬止损
+				if ok, sellPrice, reason := strategy.CheckHardStop(today, hold.buyPrice, 0.10); ok {
 					trades = append(trades, buildClosedTrade(code, hold, i, sellPrice, reason, klines))
 					hold = nil
 					continue
