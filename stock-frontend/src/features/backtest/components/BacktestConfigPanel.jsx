@@ -21,12 +21,34 @@ const fieldStyle = {
   minWidth: '140px',
 }
 
-function BacktestConfigPanel({ config, setConfig, onRun, loading, result }) {
+const allStrategies = [
+  { value: 'MACB', label: 'MACB 均线收敛突破' },
+  { value: 'CBBM', label: 'CBBM 中枢强势突破' },
+  { value: 'PBMA', label: 'PBMA 缩量回踩狙击' },
+]
+
+function BacktestConfigPanel({ config, setConfig, onRun, loading, result, activeJob, activeJobId }) {
   const update = (key, value) => setConfig((prev) => ({ ...prev, [key]: value }))
+
+  // 策略多选逻辑
+  const selectedStrategies = config.strategy === 'ALL' || config.strategy === ''
+    ? allStrategies.map(s => s.value)
+    : config.strategy.split(',').map(s => s.trim()).filter(Boolean)
+
+  const toggleStrategy = (val) => {
+    let next
+    if (selectedStrategies.includes(val)) {
+      next = selectedStrategies.filter(s => s !== val)
+    } else {
+      next = [...selectedStrategies, val]
+    }
+    // 全选 = ALL，全不选也回退为 ALL
+    update('strategy', next.length === allStrategies.length || next.length === 0 ? 'ALL' : next.join(','))
+  }
 
   const onExport = () => {
     const link = document.createElement('a')
-    link.href = '/api/backtest/download'
+    link.href = activeJobId ? `/api/backtest/download?job_id=${activeJobId}` : '/api/backtest/download'
     link.download = ''
     document.body.appendChild(link)
     link.click()
@@ -53,14 +75,20 @@ function BacktestConfigPanel({ config, setConfig, onRun, loading, result }) {
           <label style={labelStyle}>初始资金</label>
           <input style={inputStyle} type="number" value={config.initial_capital} onChange={(e) => update('initial_capital', +e.target.value)} />
         </div>
-        <div style={fieldStyle}>
-          <label style={labelStyle}>策略选择</label>
-          <select style={{ ...inputStyle, cursor: 'pointer' }} value={config.strategy} onChange={(e) => update('strategy', e.target.value)}>
-            <option value="ALL">全部策略</option>
-            <option value="MACB">MACB 均线收敛突破</option>
-            <option value="CBBM">CBBM 中枢强势突破</option>
-            <option value="PBMA">PBMA 缩量回踩狙击</option>
-          </select>
+        <div style={{ ...fieldStyle, minWidth: '240px' }}>
+          <label style={labelStyle}>策略选择（可多选）</label>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 14px', padding: '6px 0' }}>
+            {allStrategies.map(s => (
+              <label key={s.value} style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: '#ccc', fontSize: '0.85rem' }}>
+                <input
+                  type="checkbox"
+                  checked={selectedStrategies.includes(s.value)}
+                  onChange={() => toggleStrategy(s.value)}
+                />
+                {s.value}
+              </label>
+            ))}
+          </div>
         </div>
         <div style={fieldStyle}>
           <label style={labelStyle}>手续费率</label>
@@ -82,7 +110,13 @@ function BacktestConfigPanel({ config, setConfig, onRun, loading, result }) {
             fontWeight: 'bold',
           }}
         >
-          {loading ? '回测中...' : '开始回测'}
+          {loading
+            ? activeJob?.progress
+              ? `回测中... ${activeJob.progress}`
+              : activeJob?.status === 'pending'
+                ? '任务排队中...'
+                : '回测中...'
+            : '开始回测'}
         </button>
         <button
           onClick={onExport}

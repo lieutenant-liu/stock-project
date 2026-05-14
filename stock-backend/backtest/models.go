@@ -51,6 +51,20 @@ type EquityPoint struct {
 	Value float64 `json:"value"`
 }
 
+// TradeTelemetry 交易遥测数据（Phase 1 信号开采阶段采集）。
+// 用于后续分析信号通过/被拒原因、策略命中率、过滤器效率等。
+type TradeTelemetry struct {
+	Code          string  `json:"code"`
+	Date          string  `json:"date"`
+	Strategy      string  `json:"strategy"`
+	SignalPassed  bool    `json:"signal_passed"`   // 是否最终产出买入信号
+	RejectReason  string  `json:"reject_reason"`   // 被拒原因（如 "overhead_room<3%", "vol_contraction_fail"）
+	KLineLen      int     `json:"kline_len"`       // 当时可用 K 线数量
+	OverheadRoom  float64 `json:"overhead_room"`   // GetOverheadRoom 值
+	VolRatio      float64 `json:"vol_ratio"`       // 量比
+	PEPercentile  float64 `json:"pe_percentile"`   // PE 分位数
+}
+
 // TheoreticalTrade Phase 1 产出的已闭环完整交易。
 // Phase 2 仅按 SellDate/SellPrice 执行资金回笼，不做任何判断。
 type TheoreticalTrade struct {

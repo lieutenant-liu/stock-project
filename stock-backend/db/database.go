@@ -331,6 +331,50 @@ func InitDB() {
 		updated_at TEXT NOT NULL
 	);`
 
+	createBacktestJobsTable := `
+	CREATE TABLE IF NOT EXISTS backtest_jobs (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		config_json TEXT NOT NULL,
+		status TEXT NOT NULL DEFAULT 'pending',
+		progress TEXT DEFAULT '',
+		result_json TEXT,
+		error_msg TEXT DEFAULT '',
+		csv_path TEXT DEFAULT '',
+		created_at TEXT NOT NULL,
+		started_at TEXT DEFAULT '',
+		finished_at TEXT DEFAULT ''
+	);`
+
+	// 21. 回测计划（一组相关回测任务的容器）
+	createBacktestPlansTable := `
+	CREATE TABLE IF NOT EXISTS backtest_plans (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL DEFAULT '',
+		status TEXT NOT NULL DEFAULT 'pending',
+		progress TEXT DEFAULT '',
+		task_count INTEGER NOT NULL DEFAULT 0,
+		completed_count INTEGER NOT NULL DEFAULT 0,
+		created_at TEXT NOT NULL,
+		started_at TEXT DEFAULT '',
+		finished_at TEXT DEFAULT ''
+	);`
+
+	// 22. 回测计划中的单个任务
+	createBacktestPlanTasksTable := `
+	CREATE TABLE IF NOT EXISTS backtest_plan_tasks (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		plan_id INTEGER NOT NULL,
+		config_json TEXT NOT NULL,
+		status TEXT NOT NULL DEFAULT 'pending',
+		result_json TEXT,
+		error_msg TEXT DEFAULT '',
+		csv_path TEXT DEFAULT '',
+		created_at TEXT NOT NULL,
+		finished_at TEXT DEFAULT '',
+		FOREIGN KEY(plan_id) REFERENCES backtest_plans(id)
+	);
+	CREATE INDEX IF NOT EXISTS idx_plan_tasks_plan_id ON backtest_plan_tasks(plan_id);`
+
 	// 清理旧表：销毁过时的打卡本！
 	DB.Exec(`DROP TABLE IF EXISTS sync_history;`)
 	DB.Exec(`DROP TABLE IF EXISTS sync_history_fund;`)
@@ -345,6 +389,7 @@ func InitDB() {
 		createAutoSyncRunStepsTable,
 		createEmailNotifyConfigTable, createEmailRecipientsTable,
 		createCyqPerfTable, createStkFactorProTable, createSystemConfigTable,
+		createBacktestJobsTable, createBacktestPlansTable, createBacktestPlanTasksTable,
 	}
 	for _, sqlStr := range tables {
 		if _, err = DB.Exec(sqlStr); err != nil {

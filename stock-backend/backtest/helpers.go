@@ -18,14 +18,30 @@ func subtractDays(dateStr string, n int) string {
 }
 
 func selectAnalyzers(name string) []strategy.Analyzer {
-	switch strings.ToUpper(name) {
-	case "MACB":
-		return []strategy.Analyzer{&strategy.MACBAnalyzer{}}
-	case "CBBM":
-		return []strategy.Analyzer{&strategy.CBBMAnalyzer{}}
-	default:
-		return strategy.GetActiveAnalyzers()
+	all := strategy.GetActiveAnalyzers()
+	upper := strings.ToUpper(strings.TrimSpace(name))
+	if upper == "ALL" || upper == "" {
+		return all
 	}
+
+	// 支持逗号分隔的多策略组合，如 "MACB,PBMA"
+	parts := strings.Split(upper, ",")
+	var selected []strategy.Analyzer
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		for _, a := range all {
+			if strings.Contains(strings.ToUpper(a.Name()), part) {
+				selected = append(selected, a)
+			}
+		}
+	}
+	if len(selected) == 0 {
+		return all // fallback
+	}
+	return selected
 }
 
 func containsBuySignal(signal string) bool {

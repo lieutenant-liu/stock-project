@@ -222,11 +222,16 @@ func HasProbingAction(history []tushare.DailyKLine, boxUpper float64, lookbackDa
 // V3.3 宏观调整 3：统一大级别压力位防雷网 (计算上方真空区)
 // ==========================================
 func GetOverheadRoom(history []tushare.DailyKLine, currentPrice float64, lookbackDays int) float64 {
+	// P1: 数据不足时扫描全部可用历史，而非直接返回 1.0 绕过过滤
+	actualLookback := lookbackDays
 	if len(history) < lookbackDays {
-		return 1.0 // 数据不足，默认天空才是尽头 (不阻拦，交给基本面护盾)
+		actualLookback = len(history)
+	}
+	if actualLookback <= 1 || currentPrice <= 0 {
+		return 1.0
 	}
 	resistance := 0.0
-	startIndex := len(history) - lookbackDays
+	startIndex := len(history) - actualLookback
 	for i := startIndex; i < len(history)-1; i++ {
 		if history[i].High > resistance {
 			resistance = history[i].High

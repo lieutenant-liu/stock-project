@@ -67,9 +67,26 @@ const api = {
   addPosition: (payload) => request("/api/position/add", { method: "POST", body: payload }),
   deletePosition: (payload) => request("/api/position/delete", { method: "POST", body: payload }),
   runBacktest: (payload) => request("/api/backtest", { method: "POST", body: payload }),
-  downloadBacktestCSV: () => {
+  submitBacktest: (payload) => request("/api/backtest", { method: "POST", body: payload }),
+  getBacktestJob: (id) => request(`/api/backtest/${id}`),
+  listBacktestJobs: (limit = 20) => request("/api/backtest/list", { params: { limit } }),
+  deleteBacktestJob: (id) => request(`/api/backtest/${id}`, { method: "DELETE" }),
+  downloadBacktestCSV: (jobId) => {
     const link = document.createElement('a')
-    link.href = '/api/backtest/download'
+    link.href = jobId ? `/api/backtest/download?job_id=${jobId}` : '/api/backtest/download'
+    link.download = ''
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  },
+  // 回测计划（批量多任务）
+  submitBacktestPlan: (payload) => request("/api/backtest/plan", { method: "POST", body: payload }),
+  getBacktestPlan: (id) => request(`/api/backtest/plan/${id}`),
+  listBacktestPlans: (limit = 20) => request("/api/backtest/plan/list", { params: { limit } }),
+  deleteBacktestPlan: (id) => request(`/api/backtest/plan/${id}`, { method: "DELETE" }),
+  downloadPlanTaskCSV: (taskId) => {
+    const link = document.createElement('a')
+    link.href = `/api/backtest/plan/download?task_id=${taskId}`
     link.download = ''
     document.body.appendChild(link)
     link.click()

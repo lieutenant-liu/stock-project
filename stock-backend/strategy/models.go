@@ -31,6 +31,7 @@ type SecurityContext struct {
 // Analyzer 多态策略引擎接口定义 (Strategy Pattern)
 type Analyzer interface {
 	Name() string
+	MarketTag() string                           // "right" (右侧突破) 或 "left" (左侧抄底/回踩)
 	RequiredData() []string                      // 声明需要的数据："klines", "fundamentals", "moneyflow"
 	Analyze(ctx *SecurityContext) DiagnoseResult // 💥 接口升维：接收上下文
 	EvaluateHold(pos *Position, today tushare.DailyKLine, history []tushare.DailyKLine, meta map[string]float64) EvaluateHoldResult

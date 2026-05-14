@@ -56,6 +56,7 @@ func RunV2(cfg BacktestConfig) (*BacktestResult, error) {
 	tPhase1 := time.Now()
 	signals := phase1SignalMining(cfg)
 	log.Printf("[回测V2] Phase 1 完成 | 信号=%d 笔 | 耗时 %s", len(signals), time.Since(tPhase1).Round(time.Millisecond))
+	strategy.PbmaProbeReport() // 死因探针：输出 PBMA 各步骤淘汰统计
 
 	// ── Phase 2: Portfolio Simulation ──
 	tPhase2 := time.Now()
@@ -74,9 +75,64 @@ func RunV2(cfg BacktestConfig) (*BacktestResult, error) {
 
 const chunkSize = 100
 
+// MaxSignalsPerTask 单任务信号上限，防止 OOM（Termux 安全阈值）。
+const MaxSignalsPerTask = 100000
+
+// ChunkData 一个 chunk 的批量查询结果（用完即弃，控制内存峰值）。
+type ChunkData struct {
+	Codes      []string
+	KLinesMap  map[string][]tushare.DailyKLine
+	FundsMap   map[string][]tushare.DailyFundamental
+	FlowsMap   map[string][]tushare.DailyMoneyFlow
+	LimitsMap  map[string][]tushare.StkLimit
+	CyqPerfMap map[string][]tushare.CyqPerf
+}
+
+// LoadChunk 从 DB 加载单个 chunk 的全部数据（5条SQL）。
+func LoadChunk(codes []string, lookbackStart, endDate string) ChunkData {
+	return ChunkData{
+		Codes:      codes,
+		KLinesMap:  db.BatchGetKLinesWithAdj(codes, lookbackStart, endDate),
+		FundsMap:   db.BatchGetFundamentals(codes, lookbackStart, endDate),
+		FlowsMap:   db.BatchGetMoneyFlow(codes, lookbackStart, endDate),
+		LimitsMap:  db.BatchGetStkLimit(codes, lookbackStart, endDate),
+		CyqPerfMap: db.BatchGetCyqPerf(codes, lookbackStart, endDate),
+	}
+}
+
+// MineChunkSignals 对单个 chunk 的数据执行信号开采（纯内存，无DB查询）。
+func MineChunkSignals(
+	cfg BacktestConfig,
+	chunk ChunkData,
+	analyzers []strategy.Analyzer,
+	isBullMarket map[string]bool,
+	isStrongMarket map[string]bool,
+) []TheoreticalTrade {
+	var signals []TheoreticalTrade
+	for _, code := range chunk.Codes {
+		klines := chunk.KLinesMap[code]
+		if len(klines) < 30 { // P1: 降低门槛，让 PBMA(需~30根) 通过；MACB/CBBM 由自身内部检查过滤
+			continue
+		}
+		funds := chunk.FundsMap[code]
+		flows := chunk.FlowsMap[code]
+		limits := chunk.LimitsMap[code]
+		cyqPerfs := chunk.CyqPerfMap[code]
+
+		limitMap := make(map[string]tushare.StkLimit, len(limits))
+		for _, l := range limits {
+			limitMap[l.TradeDate] = l
+		}
+
+		trades := mineStockSignals(code, klines, funds, flows, limitMap, cyqPerfs, cfg, analyzers, isBullMarket, isStrongMarket)
+		signals = append(signals, trades...)
+	}
+	return signals
+}
+
 func phase1SignalMining(cfg BacktestConfig) []TheoreticalTrade {
 	analyzers := selectAnalyzers(cfg.Strategy)
-	lookbackStart := subtractDays(cfg.StartDate, 365) // 确保至少 250 个交易日的预热数据
+	lookbackStart := subtractDays(cfg.StartDate, 365)
 
 	// 1. 宏观风控预计算（1次查询）
 	indexData := db.GetIndexDailyForBacktest("000001.SH", lookbackStart, cfg.EndDate)
@@ -94,40 +150,18 @@ func phase1SignalMining(cfg BacktestConfig) []TheoreticalTrade {
 		if end > total {
 			end = total
 		}
-		chunk := cfg.TargetPool[i:end]
-
-		// 5 条批量 SQL（代替 400 条单股查询）
-		klinesMap := db.BatchGetKLinesWithAdj(chunk, lookbackStart, cfg.EndDate)
-		fundsMap := db.BatchGetFundamentals(chunk, lookbackStart, cfg.EndDate)
-		flowsMap := db.BatchGetMoneyFlow(chunk, lookbackStart, cfg.EndDate)
-		limitsMap := db.BatchGetStkLimit(chunk, lookbackStart, cfg.EndDate)
-		cyqPerfMap := db.BatchGetCyqPerf(chunk, lookbackStart, cfg.EndDate)
-
-		// 纯内存策略运算
-		for _, code := range chunk {
-			klines := klinesMap[code]
-			if len(klines) < 130 {
-				continue
-			}
-
-			funds := fundsMap[code]
-			flows := flowsMap[code]
-			limits := limitsMap[code]
-			cyqPerfs := cyqPerfMap[code]
-
-			limitMap := make(map[string]tushare.StkLimit, len(limits))
-			for _, l := range limits {
-				limitMap[l.TradeDate] = l
-			}
-
-			trades := mineStockSignals(code, klines, funds, flows, limitMap, cyqPerfs, cfg, analyzers, isBullMarket, isStrongMarket)
-			signals = append(signals, trades...)
+		codes := cfg.TargetPool[i:end]
+		chunk := LoadChunk(codes, lookbackStart, cfg.EndDate)
+		chunkSignals := MineChunkSignals(cfg, chunk, analyzers, isBullMarket, isStrongMarket)
+		// P1: 信号上限防 OOM
+		if len(signals)+len(chunkSignals) > MaxSignalsPerTask {
+			log.Printf("[回测V2] 信号数已达上限 %d，截断剩余 chunk", MaxSignalsPerTask)
+			break
 		}
+		signals = append(signals, chunkSignals...)
 
-		processed += len(chunk)
+		processed += len(codes)
 		log.Printf("[回测V2] 信号开采进度 %d/%d | 信号=%d 笔", processed, total, len(signals))
-
-		// klinesMap/fundsMap/flowsMap/limitsMap 在此作用域结束，GC 可回收
 	}
 
 	return signals
@@ -303,16 +337,16 @@ func mineStockSignals(
 
 			// 构建策略上下文
 			ctx := buildStockContext(code, klines, funds, flows, fundMap, flowMap, cyqMap, i, todayDate)
-			if ctx == nil || len(ctx.KLines) < 120 {
+			if ctx == nil || len(ctx.KLines) < 30 { // P1: 降低门槛，各策略内部自行检查所需最小长度
 				continue
 			}
 
-			// 弱势环境下仅允许左侧策略 (DSS)，屏蔽右侧突破策略 (MACB/CBBM)
+			// 弱势环境下仅允许左侧策略（缩量回踩/深海动量），屏蔽右侧突破策略
 			eligible := analyzers
 			if !isStrongMarket[todayDate] {
-				eligible = eligible[:0]
+				eligible = make([]strategy.Analyzer, 0, len(analyzers))
 				for _, a := range analyzers {
-					if strings.Contains(a.Name(), "DSS") {
+					if a.MarketTag() == "left" {
 						eligible = append(eligible, a)
 					}
 				}

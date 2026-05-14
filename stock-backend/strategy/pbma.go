@@ -2,9 +2,75 @@ package strategy
 
 import (
 	"fmt"
+	"log"
 	"math"
 	"stock-backend/tushare"
+	"sync/atomic"
 )
+
+// ── PBMA 死因探针（Survival Analyzer）──
+// 全局原子计数器，记录每一步的存活/淘汰数量。
+var (
+	pbmaTotalBars   int64
+	pbmaFailKlines  int64 // len(klines) < 30
+	pbmaFailFund    int64 // 基本面过滤
+	pbmaFailVolMA   int64 // volMa20 <= 0
+	pbmaFailAnchor  int64 // 无锚点
+	pbmaFailPullbk  int64 // 回调区间无效
+	pbmaFailPriceHi int64 // 价格 >= anchorHigh
+	pbmaFailShrink  int64 // 缩量不够
+	pbmaFailMA20    int64 // MA20 不足或未回踩
+	pbmaFailReversl int64 // 非阳线或未站上 MA20
+	pbmaFailRoom    int64 // Overhead Room 不足
+	pbmaPass        int64 // 成功生成信号
+)
+
+// PbmaProbeReport 输出 PBMA 存活分析报告并重置计数器。
+func PbmaProbeReport() {
+	total := atomic.LoadInt64(&pbmaTotalBars)
+	if total == 0 {
+		log.Printf("[PBMA探针] 未被调用过，无数据")
+		return
+	}
+	failK := atomic.LoadInt64(&pbmaFailKlines)
+	failF := atomic.LoadInt64(&pbmaFailFund)
+	failV := atomic.LoadInt64(&pbmaFailVolMA)
+	failA := atomic.LoadInt64(&pbmaFailAnchor)
+	failP := atomic.LoadInt64(&pbmaFailPullbk)
+	failH := atomic.LoadInt64(&pbmaFailPriceHi)
+	failS := atomic.LoadInt64(&pbmaFailShrink)
+	failM := atomic.LoadInt64(&pbmaFailMA20)
+	failR := atomic.LoadInt64(&pbmaFailReversl)
+	failO := atomic.LoadInt64(&pbmaFailRoom)
+	pass := atomic.LoadInt64(&pbmaPass)
+
+	log.Printf("[PBMA探针] 总调用 %d 次 | 淘汰漏斗:", total)
+	log.Printf("  ├─ K线不足(%%%.1f) %d", float64(failK)/float64(total)*100, failK)
+	log.Printf("  ├─ 基本面淘汰(%%%.1f) %d", float64(failF)/float64(total)*100, failF)
+	log.Printf("  ├─ VolMA=0(%%%.1f) %d", float64(failV)/float64(total)*100, failV)
+	log.Printf("  ├─ 无锚点(%%%.1f) %d", float64(failA)/float64(total)*100, failA)
+	log.Printf("  ├─ 回调无效(%%%.1f) %d", float64(failP)/float64(total)*100, failP)
+	log.Printf("  ├─ 价格>=锚高(%%%.1f) %d", float64(failH)/float64(total)*100, failH)
+	log.Printf("  ├─ 缩量不足(%%%.1f) %d", float64(failS)/float64(total)*100, failS)
+	log.Printf("  ├─ MA20/回踩(%%%.1f) %d", float64(failM)/float64(total)*100, failM)
+	log.Printf("  ├─ 非阳线(%%%.1f) %d", float64(failR)/float64(total)*100, failR)
+	log.Printf("  ├─ Room不足(%%%.1f) %d", float64(failO)/float64(total)*100, failO)
+	log.Printf("  └─ ✅ 通过(%%%.2f) %d", float64(pass)/float64(total)*100, pass)
+
+	// 重置
+	atomic.StoreInt64(&pbmaTotalBars, 0)
+	atomic.StoreInt64(&pbmaFailKlines, 0)
+	atomic.StoreInt64(&pbmaFailFund, 0)
+	atomic.StoreInt64(&pbmaFailVolMA, 0)
+	atomic.StoreInt64(&pbmaFailAnchor, 0)
+	atomic.StoreInt64(&pbmaFailPullbk, 0)
+	atomic.StoreInt64(&pbmaFailPriceHi, 0)
+	atomic.StoreInt64(&pbmaFailShrink, 0)
+	atomic.StoreInt64(&pbmaFailMA20, 0)
+	atomic.StoreInt64(&pbmaFailReversl, 0)
+	atomic.StoreInt64(&pbmaFailRoom, 0)
+	atomic.StoreInt64(&pbmaPass, 0)
+}
 
 // ==========================================
 // 策略四：缩量回踩狙击 (PBMA - Pullback Moving Average)
@@ -14,17 +80,22 @@ import (
 type PBMAAnalyzer struct{}
 
 func (p *PBMAAnalyzer) Name() string           { return "缩量回踩狙击 (PBMA)" }
+func (p *PBMAAnalyzer) MarketTag() string      { return "left" }
 func (p *PBMAAnalyzer) RequiredData() []string { return []string{"klines", "fundamentals"} }
 
 func (p *PBMAAnalyzer) Analyze(ctx *SecurityContext) DiagnoseResult {
 	code := ctx.Code
 	klines := ctx.KLines
+	atomic.AddInt64(&pbmaTotalBars, 1)
+
 	if len(klines) < 30 {
+		atomic.AddInt64(&pbmaFailKlines, 1)
 		return DiagnoseResult{Signal: "观望 💤"}
 	}
 
 	// 基本面过滤
 	if !checkFundamentalShield(ctx, false) {
+		atomic.AddInt64(&pbmaFailFund, 1)
 		return DiagnoseResult{Signal: "观望 💤"}
 	}
 
@@ -37,6 +108,7 @@ func (p *PBMAAnalyzer) Analyze(ctx *SecurityContext) DiagnoseResult {
 	// =====================================================
 	volMa20 := CalcVolMA(klines, 20)
 	if volMa20 <= 0 {
+		atomic.AddInt64(&pbmaFailVolMA, 1)
 		return DiagnoseResult{Signal: "观望 💤"}
 	}
 
@@ -50,10 +122,11 @@ func (p *PBMAAnalyzer) Analyze(ctx *SecurityContext) DiagnoseResult {
 
 	for i := scanStart; i < n-1; i++ {
 		k := klines[i]
-		if k.PreClose <= 0 {
+		prevClose := klines[i-1].Close // 前一日收盘价（PreClose 字段在 BatchGetKLinesWithAdj 中未被查询，始终为 0）
+		if prevClose <= 0 {
 			continue
 		}
-		pctChg := (k.Close - k.PreClose) / k.PreClose
+		pctChg := (k.Close - prevClose) / prevClose
 		isBigYang := pctChg > 0.05 && k.Close > k.Open
 		isVolumeSurge := k.Vol > 1.5*volMa20
 		if isBigYang && isVolumeSurge {
@@ -64,6 +137,7 @@ func (p *PBMAAnalyzer) Analyze(ctx *SecurityContext) DiagnoseResult {
 	}
 
 	if anchorIdx < 0 {
+		atomic.AddInt64(&pbmaFailAnchor, 1)
 		return DiagnoseResult{Signal: "观望 💤"}
 	}
 
@@ -74,11 +148,13 @@ func (p *PBMAAnalyzer) Analyze(ctx *SecurityContext) DiagnoseResult {
 	pullbackStart := anchorIdx + 1
 	pullbackEnd := n - 1 // 昨天（不含今天）
 	if pullbackStart >= pullbackEnd {
+		atomic.AddInt64(&pbmaFailPullbk, 1)
 		return DiagnoseResult{Signal: "观望 💤"}
 	}
 
 	// 价格必须低于锚点最高价（处于回调状态）
 	if today.Close >= anchorHigh {
+		atomic.AddInt64(&pbmaFailPriceHi, 1)
 		return DiagnoseResult{Signal: "观望 💤"}
 	}
 
@@ -90,11 +166,13 @@ func (p *PBMAAnalyzer) Analyze(ctx *SecurityContext) DiagnoseResult {
 		pullbackDays++
 	}
 	if pullbackDays == 0 {
+		atomic.AddInt64(&pbmaFailPullbk, 1)
 		return DiagnoseResult{Signal: "观望 💤"}
 	}
 	avgPullbackVol := totalVol / float64(pullbackDays)
 
 	if avgPullbackVol >= 0.5*anchorVol {
+		atomic.AddInt64(&pbmaFailShrink, 1)
 		return DiagnoseResult{Signal: "观望 💤"} // 缩量不够极致
 	}
 
@@ -104,11 +182,13 @@ func (p *PBMAAnalyzer) Analyze(ctx *SecurityContext) DiagnoseResult {
 	// =====================================================
 	ma20 := CalcMA(klines, 20)
 	if ma20 <= 0 {
+		atomic.AddInt64(&pbmaFailMA20, 1)
 		return DiagnoseResult{Signal: "观望 💤"}
 	}
 
 	lowDist := math.Abs(today.Low-ma20) / ma20
 	if lowDist >= 0.03 {
+		atomic.AddInt64(&pbmaFailMA20, 1)
 		return DiagnoseResult{Signal: "观望 💤"} // 没有回踩到均线
 	}
 
@@ -119,6 +199,7 @@ func (p *PBMAAnalyzer) Analyze(ctx *SecurityContext) DiagnoseResult {
 	isYangLine := today.Close > today.Open
 	closeAboveMA20 := today.Close > ma20
 	if !isYangLine || !closeAboveMA20 {
+		atomic.AddInt64(&pbmaFailReversl, 1)
 		return DiagnoseResult{Signal: "观望 💤"}
 	}
 
@@ -126,7 +207,8 @@ func (p *PBMAAnalyzer) Analyze(ctx *SecurityContext) DiagnoseResult {
 	// 全部通过，生成买入信号
 	// =====================================================
 	room := GetOverheadRoom(klines, today.Close, 120)
-	if room < 0.10 {
+	if room < 0.03 {
+		atomic.AddInt64(&pbmaFailRoom, 1)
 		return DiagnoseResult{Signal: "观望 💤"} // 上方空间不足
 	}
 
@@ -134,13 +216,15 @@ func (p *PBMAAnalyzer) Analyze(ctx *SecurityContext) DiagnoseResult {
 	atr14 := CalcATR(klines, 14)
 
 	volRatio := avgPullbackVol / anchorVol * 100
+	anchorPctChg := (klines[anchorIdx].Close/klines[anchorIdx-1].Close - 1) * 100
 	msg := fmt.Sprintf("🎯 缩量回踩狙击！锚点日涨幅%.1f%%放量(距今%d天)，回调期缩量至锚点%.0f%%，今日最低%.2f精准回踩MA20(%.2f)，阳线反转确认。上方空间%.1f%%。",
-		(anchorHigh/klines[anchorIdx].PreClose-1)*100,
+		anchorPctChg,
 		n-1-anchorIdx,
 		volRatio,
 		today.Low, ma20,
 		room*100)
 
+	atomic.AddInt64(&pbmaPass, 1)
 	return DiagnoseResult{
 		Code:         code,
 		StrategyName: p.Name(),

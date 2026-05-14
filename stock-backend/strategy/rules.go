@@ -40,7 +40,8 @@ func checkFundamentalShield(ctx *SecurityContext, strictMode bool) bool {
 // ==========================================
 type MACBAnalyzer struct{}
 
-func (m *MACBAnalyzer) Name() string { return "均线收敛突破 (MACB)" }
+func (m *MACBAnalyzer) Name() string      { return "均线收敛突破 (MACB)" }
+func (m *MACBAnalyzer) MarketTag() string { return "right" }
 func (m *MACBAnalyzer) RequiredData() []string {
 	return []string{"klines", "fundamentals", "moneyflow"}
 } // 💥 补充了 moneyflow
@@ -69,6 +70,11 @@ func (m *MACBAnalyzer) Analyze(ctx *SecurityContext) DiagnoseResult {
 
 	today := klines[len(klines)-1]
 	yesterday := klines[len(klines)-2]
+
+	// P1: 防止除零崩溃
+	if yesterday.Close <= 0 {
+		return DiagnoseResult{Signal: "观望 💤"}
+	}
 
 	// -----------------------------------------------------
 	// 2. 技术面买点引擎 (Buy Signal: Convergence + Breakout)
@@ -185,7 +191,8 @@ func (m *MACBAnalyzer) EvaluateHold(pos *Position, today tushare.DailyKLine, his
 // ==========================================
 type CBBMAnalyzer struct{}
 
-func (c *CBBMAnalyzer) Name() string { return "中枢强势突破 (CBBM)" }
+func (c *CBBMAnalyzer) Name() string      { return "中枢强势突破 (CBBM)" }
+func (c *CBBMAnalyzer) MarketTag() string { return "right" }
 func (c *CBBMAnalyzer) RequiredData() []string {
 	return []string{"klines", "fundamentals", "moneyflow"}
 } // 💥 补充了 moneyflow
@@ -219,6 +226,9 @@ func (c *CBBMAnalyzer) Analyze(ctx *SecurityContext) DiagnoseResult {
 
 	if len(klines) >= 6 {
 		startJumpPrice := klines[len(klines)-6].Close
+		if startJumpPrice <= 0 {
+			return DiagnoseResult{Signal: "观望 💤"}
+		}
 		if (today.Close-startJumpPrice)/startJumpPrice > 0.15 {
 			return DiagnoseResult{Signal: "观望 💤"}
 		}
@@ -331,6 +341,7 @@ func (c *CBBMAnalyzer) EvaluateHold(pos *Position, today tushare.DailyKLine, his
 type DSSAnalyzer struct{}
 
 func (d *DSSAnalyzer) Name() string           { return "深海动量 2.0 (DSS)" }
+func (d *DSSAnalyzer) MarketTag() string      { return "left" }
 func (d *DSSAnalyzer) RequiredData() []string { return []string{"klines", "fundamentals"} }
 
 func (d *DSSAnalyzer) Analyze(ctx *SecurityContext) DiagnoseResult {
@@ -360,6 +371,9 @@ func (d *DSSAnalyzer) Analyze(ctx *SecurityContext) DiagnoseResult {
 	}
 
 	// 计算真空区：要求上方至少有 30% 的无阻力空间，否则不参与底部的内卷
+	if today.Close <= 0 {
+		return DiagnoseResult{Signal: "观望 💤"}
+	}
 	room := (resistance250 - today.Close) / today.Close
 	if resistance250 > today.Close && room < 0.30 {
 		return DiagnoseResult{Signal: "观望 💤"}
