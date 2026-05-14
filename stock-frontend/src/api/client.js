@@ -92,6 +92,17 @@ const api = {
     link.click()
     document.body.removeChild(link)
   },
+  // 信号实验室
+  runSignalLab: (payload) => request("/api/signallab/run", { method: "POST", body: payload }),
+  listSignalLabJobs: (limit = 20) => request("/api/signallab/jobs", { params: { limit } }),
+  downloadSignalLabCSV: (jobId) => {
+    const link = document.createElement('a')
+    link.href = `/api/signallab/download?job_id=${jobId}`
+    link.download = ''
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  },
 };
 
 export default api;
