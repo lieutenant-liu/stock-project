@@ -161,7 +161,7 @@ func runTaskGroup(
 	onTaskComplete func(),
 ) {
 	sig := group.sig
-	lookbackStart := subtractDays(sig.startDate, 365)
+	lookbackStart := SubtractDays(sig.startDate, 365)
 	batchChunkSize := 50 // Termux 安全值，内存峰值 ≈ 50 只股票
 
 	// 获取统一股票池
@@ -193,8 +193,8 @@ func runTaskGroup(
 
 	// 加载全局数据（1次）
 	indexData := db.GetIndexDailyForBacktest("000001.SH", lookbackStart, sig.endDate)
-	isBullMarket := buildMarketRegimeMap(indexData)
-	isStrongMarket := buildStrongMarketMap(indexData)
+	isBullMarket := BuildMarketRegimeMap(indexData)
+	isStrongMarket := BuildStrongMarketMap(indexData)
 
 	// 为每个 task 准备信号收集器和 analyzer
 	type taskState struct {
@@ -206,7 +206,7 @@ func runTaskGroup(
 	for i, t := range group.tasks {
 		states[i] = taskState{
 			input:     t,
-			analyzers: selectAnalyzers(t.Config.Strategy),
+			analyzers: SelectAnalyzers(t.Config.Strategy),
 		}
 	}
 

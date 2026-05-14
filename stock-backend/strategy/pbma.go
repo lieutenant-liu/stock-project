@@ -207,9 +207,9 @@ func (p *PBMAAnalyzer) Analyze(ctx *SecurityContext) DiagnoseResult {
 	// 全部通过，生成买入信号
 	// =====================================================
 	room := GetOverheadRoom(klines, today.Close, 120)
-	if room < 0.03 {
+	if room < 0.10 {
 		atomic.AddInt64(&pbmaFailRoom, 1)
-		return DiagnoseResult{Signal: "观望 💤"} // 上方空间不足
+		return DiagnoseResult{Signal: "观望 💤"} // 上方空间不足 10%
 	}
 
 	// 计算 ATR 用于止损参考

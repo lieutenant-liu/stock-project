@@ -131,13 +131,13 @@ func MineChunkSignals(
 }
 
 func phase1SignalMining(cfg BacktestConfig) []TheoreticalTrade {
-	analyzers := selectAnalyzers(cfg.Strategy)
-	lookbackStart := subtractDays(cfg.StartDate, 365)
+	analyzers := SelectAnalyzers(cfg.Strategy)
+	lookbackStart := SubtractDays(cfg.StartDate, 365)
 
 	// 1. 宏观风控预计算（1次查询）
 	indexData := db.GetIndexDailyForBacktest("000001.SH", lookbackStart, cfg.EndDate)
-	isBullMarket := buildMarketRegimeMap(indexData)
-	isStrongMarket := buildStrongMarketMap(indexData)
+	isBullMarket := BuildMarketRegimeMap(indexData)
+	isStrongMarket := BuildStrongMarketMap(indexData)
 	log.Printf("[回测V2] 大盘数据 %d 天, 安全日 %d 天, 强势日 %d 天", len(indexData), countTrue(isBullMarket), countTrue(isStrongMarket))
 
 	// 2. 分块批量加载 + 纯内存策略运算
@@ -336,7 +336,7 @@ func mineStockSignals(
 			}
 
 			// 构建策略上下文
-			ctx := buildStockContext(code, klines, funds, flows, fundMap, flowMap, cyqMap, i, todayDate)
+			ctx := BuildStockContext(code, klines, funds, flows, fundMap, flowMap, cyqMap, i, todayDate)
 			if ctx == nil || len(ctx.KLines) < 30 { // P1: 降低门槛，各策略内部自行检查所需最小长度
 				continue
 			}
@@ -357,7 +357,7 @@ func mineStockSignals(
 
 			for _, analyzer := range eligible {
 				result := analyzer.Analyze(ctx)
-				if containsBuySignal(result.Signal) {
+				if ContainsBuySignal(result.Signal) {
 					pending = &pendingSignal{
 						code:       code,
 						signalDate: todayDate,
@@ -434,8 +434,8 @@ func buildStrategyMeta(strategyName string, buyResult strategy.DiagnoseResult, k
 	return meta
 }
 
-// buildStockContext 构建单只股票在指定日期的策略上下文。
-func buildStockContext(
+// BuildStockContext 构建单只股票在指定日期的策略上下文。
+func BuildStockContext(
 	code string,
 	klines []tushare.DailyKLine,
 	funds []tushare.DailyFundamental,
@@ -485,7 +485,7 @@ func buildStockContext(
 	}
 
 	// PE 分位数
-	pePercentile := calcPEPercentileFromFunds(funds, currentDate)
+	pePercentile := CalcPEPercentileFromFunds(funds, currentDate)
 
 	return &strategy.SecurityContext{
 		Code:         code,
@@ -497,8 +497,8 @@ func buildStockContext(
 	}
 }
 
-// calcPEPercentileFromFunds 从已加载的基本面数据中计算 PE 分位数。
-func calcPEPercentileFromFunds(funds []tushare.DailyFundamental, endDate string) float64 {
+// CalcPEPercentileFromFunds 从已加载的基本面数据中计算 PE 分位数。
+func CalcPEPercentileFromFunds(funds []tushare.DailyFundamental, endDate string) float64 {
 	if len(funds) < 100 {
 		return 0.5
 	}
@@ -684,7 +684,7 @@ func phase2PortfolioSim(cfg BacktestConfig, signals []TheoreticalTrade) (*Backte
 // buildMarketRegimeMap 构建大盘宏观风控 map。
 // 对齐实盘 CheckMarketEnvironment 的规则 1（暴跌风控）和规则 2（趋势风控）。
 // true = 允许开新仓，false = 屏蔽新买入信号（但不强制平仓）。
-func buildMarketRegimeMap(indexData []tushare.IndexDaily) map[string]bool {
+func BuildMarketRegimeMap(indexData []tushare.IndexDaily) map[string]bool {
 	result := make(map[string]bool, len(indexData))
 
 	for i := 0; i < len(indexData); i++ {
@@ -739,7 +739,7 @@ func countTrue(m map[string]bool) int {
 // buildStrongMarketMap 构建大盘强弱 map。
 // 对齐实盘 CheckMarketEnvironment：Close >= MA60 即为强势。
 // true = 强势市场（允许右侧突破策略 MACB/CBBM），false = 弱势市场（仅允许左侧策略 DSS）。
-func buildStrongMarketMap(indexData []tushare.IndexDaily) map[string]bool {
+func BuildStrongMarketMap(indexData []tushare.IndexDaily) map[string]bool {
 	n := len(indexData)
 	result := make(map[string]bool, n)
 
@@ -770,5 +770,5 @@ func buildStrongMarketMap(indexData []tushare.IndexDaily) map[string]bool {
 	return result
 }
 
-// selectAnalyzers 和 containsBuySignal 复用 engine.go 中的实现（models.go 同包）
-// subtractDays、countDaysBetween、buildPortfolioSummary 同理复用
+// SelectAnalyzers 和 ContainsBuySignal 已导出，供 signallab 包复用。
+// SubtractDays、countDaysBetween、buildPortfolioSummary 同理。

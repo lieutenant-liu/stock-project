@@ -9,7 +9,7 @@ import (
 )
 
 // subtractDays 从日期字符串减去 n 天。
-func subtractDays(dateStr string, n int) string {
+func SubtractDays(dateStr string, n int) string {
 	t, err := time.Parse("20060102", dateStr)
 	if err != nil {
 		return dateStr
@@ -17,7 +17,7 @@ func subtractDays(dateStr string, n int) string {
 	return t.AddDate(0, 0, -n).Format("20060102")
 }
 
-func selectAnalyzers(name string) []strategy.Analyzer {
+func SelectAnalyzers(name string) []strategy.Analyzer {
 	all := strategy.GetActiveAnalyzers()
 	upper := strings.ToUpper(strings.TrimSpace(name))
 	if upper == "ALL" || upper == "" {
@@ -44,7 +44,7 @@ func selectAnalyzers(name string) []strategy.Analyzer {
 	return selected
 }
 
-func containsBuySignal(signal string) bool {
+func ContainsBuySignal(signal string) bool {
 	return strings.Contains(signal, "买入")
 }
 

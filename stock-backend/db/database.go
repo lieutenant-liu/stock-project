@@ -359,7 +359,21 @@ func InitDB() {
 		finished_at TEXT DEFAULT ''
 	);`
 
-	// 22. 回测计划中的单个任务
+	// 22. 信号实验室任务
+	createSignalLabJobsTable := `
+	CREATE TABLE IF NOT EXISTS signal_lab_jobs (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		strategy TEXT NOT NULL,
+		status TEXT NOT NULL DEFAULT 'pending',
+		progress TEXT DEFAULT '',
+		file_path TEXT DEFAULT '',
+		error_msg TEXT DEFAULT '',
+		created_at TEXT NOT NULL,
+		started_at TEXT DEFAULT '',
+		finished_at TEXT DEFAULT ''
+	);`
+
+	// 23. 回测计划中的单个任务
 	createBacktestPlanTasksTable := `
 	CREATE TABLE IF NOT EXISTS backtest_plan_tasks (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -389,7 +403,7 @@ func InitDB() {
 		createAutoSyncRunStepsTable,
 		createEmailNotifyConfigTable, createEmailRecipientsTable,
 		createCyqPerfTable, createStkFactorProTable, createSystemConfigTable,
-		createBacktestJobsTable, createBacktestPlansTable, createBacktestPlanTasksTable,
+		createBacktestJobsTable, createBacktestPlansTable, createSignalLabJobsTable, createBacktestPlanTasksTable,
 	}
 	for _, sqlStr := range tables {
 		if _, err = DB.Exec(sqlStr); err != nil {
