@@ -6,6 +6,7 @@ import (
 	"sort"
 	"stock-backend/db"
 	"stock-backend/stockutil"
+	"stock-backend/sysmon"
 	"stock-backend/strategy"
 	"stock-backend/tushare"
 	"strings"
@@ -73,8 +74,6 @@ func RunV2(cfg BacktestConfig) (*BacktestResult, error) {
 // Phase 1: Signal Mining（按股票遍历）
 // ─────────────────────────────────────────────
 
-const chunkSize = 100
-
 // MaxSignalsPerTask 单任务信号上限，防止 OOM（Termux 安全阈值）。
 const MaxSignalsPerTask = 100000
 
@@ -131,6 +130,7 @@ func MineChunkSignals(
 }
 
 func phase1SignalMining(cfg BacktestConfig) []TheoreticalTrade {
+	chunkSize := sysmon.GetChunkSize()
 	analyzers := SelectAnalyzers(cfg.Strategy)
 	lookbackStart := SubtractDays(cfg.StartDate, 365)
 

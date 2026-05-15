@@ -7,6 +7,7 @@ import (
 	"stock-backend/db"
 	"stock-backend/stockutil"
 	"stock-backend/strategy"
+	"stock-backend/sysmon"
 	"strings"
 )
 
@@ -162,7 +163,7 @@ func runTaskGroup(
 ) {
 	sig := group.sig
 	lookbackStart := SubtractDays(sig.startDate, 365)
-	batchChunkSize := 50 // Termux 安全值，内存峰值 ≈ 50 只股票
+	batchChunkSize := sysmon.GetChunkSize()
 
 	// 获取统一股票池
 	var targetPool []string

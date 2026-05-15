@@ -16,6 +16,11 @@ function StrategyResultCard({ stock }) {
               '均线收敛突破 (MACB)': '#c23531',
               '中枢强势突破 (CBBM)': '#5470c6',
               '缩量回踩狙击 (PBMA)': '#00bfa5',
+              '中枢强势突破-实验 (CBBM-EXP)': '#7b95d4',
+              '缩量回踩狙击-实验 (PBMA-EXP)': '#4dd4b8',
+              '均线突破回踩-EXP (MACB-P-EXP)': '#e8a87c',
+              '箱体突破回踩-EXP (CBBM-P-EXP)': '#85c1e9',
+              '高质箱体突破回踩-EXP (CBBM-EXP-P-EXP)': '#aed6f1',
             }
             const tagColor = strategyColors[stock.strategy_name] || '#5470c6'
             return (

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"stock-backend/sysmon"
 
 	_ "modernc.org/sqlite"
 )
@@ -417,6 +418,13 @@ func InitDB() {
 	// 💥 修复：释放 WAL 读写并发能力
 	DB.SetMaxOpenConns(4) // 允许 4 个并发连接 (1个给后台静默写入，3个给前端查询)
 	DB.SetMaxIdleConns(2) // 保持适度的长连接池，防止 Termux 频繁创建/销毁套接字资源耗尽
+
+	// Termux 下收紧连接池：与 MaxWorkers=2 对齐，消除 DB 锁排队
+	if sysmon.GetEnv().IsTermux {
+		DB.SetMaxOpenConns(2)
+		DB.SetMaxIdleConns(2)
+		DB.Exec("PRAGMA cache_size = -10000;") // 10MB 页缓存，消灭磁盘 Spill 开销
+	}
 
 	fmt.Println("[数据清理] 旧时代打卡本已被清除，进入精确对账时代！")
 	fmt.Println("🗄️ [数据中心] 究极形态：V2.0 六大核心数据表部署完毕！")

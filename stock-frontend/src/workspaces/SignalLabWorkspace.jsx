@@ -18,11 +18,15 @@ const statusLabels = {
   failed: '失败',
 }
 
-const strategies = [
-  { value: 'ALL', label: 'ALL 全部策略' },
+const allStrategies = [
   { value: 'MACB', label: 'MACB 均线收敛突破' },
   { value: 'CBBM', label: 'CBBM 中枢强势突破' },
   { value: 'PBMA', label: 'PBMA 缩量回踩狙击' },
+  { value: 'CBBM-EXP', label: 'CBBM-EXP 中枢突破-实验' },
+  { value: 'PBMA-EXP', label: 'PBMA-EXP 缩量回踩-实验' },
+  { value: 'MACB-P-EXP', label: 'MACB-P-EXP 均线突破回踩' },
+  { value: 'CBBM-P-EXP', label: 'CBBM-P-EXP 箱体突破回踩' },
+  { value: 'CBBM-EXP-P-EXP', label: 'CBBM-EXP-P-EXP 高质箱体回踩' },
 ]
 
 const inputStyle = {
@@ -49,7 +53,18 @@ const fieldStyle = {
 }
 
 function SignalLabWorkspace() {
-  const [strategy, setStrategy] = useState('ALL')
+  const [selectedStrategies, setSelectedStrategies] = useState(allStrategies.map(s => s.value))
+
+  const toggleStrategy = (val) => {
+    setSelectedStrategies(prev => {
+      if (prev.includes(val)) return prev.filter(s => s !== val)
+      return [...prev, val]
+    })
+  }
+
+  const strategyValue = selectedStrategies.length === allStrategies.length || selectedStrategies.length === 0
+    ? 'ALL'
+    : selectedStrategies.join(',')
   const [startDate, setStartDate] = useState(defaultRange.start)
   const [endDate, setEndDate] = useState(defaultRange.end)
   const [loading, setLoading] = useState(false)
@@ -86,7 +101,7 @@ function SignalLabWorkspace() {
     setError('')
     try {
       const payload = {
-        strategy,
+        strategy: strategyValue,
         start_date: startDate.replace(/-/g, ''),
         end_date: endDate.replace(/-/g, ''),
       }
@@ -116,17 +131,20 @@ function SignalLabWorkspace() {
           信号实验室参数
         </h3>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '14px', alignItems: 'end' }}>
-          <div style={fieldStyle}>
-            <label style={labelStyle}>策略</label>
-            <select
-              style={inputStyle}
-              value={strategy}
-              onChange={(e) => setStrategy(e.target.value)}
-            >
-              {strategies.map(s => (
-                <option key={s.value} value={s.value}>{s.label}</option>
+          <div style={{ ...fieldStyle, minWidth: '240px', gridColumn: '1 / -1' }}>
+            <label style={labelStyle}>策略选择（可多选）</label>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 14px', padding: '6px 0' }}>
+              {allStrategies.map(s => (
+                <label key={s.value} style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: '#ccc', fontSize: '0.85rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={selectedStrategies.includes(s.value)}
+                    onChange={() => toggleStrategy(s.value)}
+                  />
+                  {s.value}
+                </label>
               ))}
-            </select>
+            </div>
           </div>
           <div style={fieldStyle}>
             <label style={labelStyle}>起始日期</label>

@@ -3,31 +3,37 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
 
 	"stock-backend/db"
+	"stock-backend/logger"
 	"stock-backend/signallab"
 )
 
 // SignalLabRouter 统一路由 /api/signallab 及其子路径。
 func SignalLabRouter(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/signallab")
+	path = strings.TrimPrefix(path, "/")
+
+	// download 路由：只设 CORS，不设 Content-Type（由 handler 自行设置）
+	if path == "download" && r.Method == http.MethodGet {
+		setCORSHeaders(w)
+		signalLabDownloadHandler(w, r)
+		return
+	}
+
 	if prepareJSONWithCORS(w, r) {
 		return
 	}
-	path := strings.TrimPrefix(r.URL.Path, "/api/signallab")
-	path = strings.TrimPrefix(path, "/")
 
 	switch {
 	case path == "run" && r.Method == http.MethodPost:
 		signalLabRunHandler(w, r)
 	case path == "jobs" && r.Method == http.MethodGet:
 		signalLabListHandler(w, r)
-	case path == "download" && r.Method == http.MethodGet:
-		signalLabDownloadHandler(w, r)
 	default:
 		respondBadRequest(w, "未知端点: "+path)
 	}
@@ -57,7 +63,7 @@ func signalLabRunHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go signallab.RunSignalLabJob(jobID, cfg)
+	go signallab.RunSignalLabJob(appCtx, jobID, cfg)
 
 	respondOK(w, map[string]interface{}{
 		"job_id": jobID,
@@ -87,42 +93,52 @@ func signalLabListHandler(w http.ResponseWriter, r *http.Request) {
 
 // signalLabDownloadHandler 处理 GET /api/signallab/download?job_id=X — 下载 CSV。
 func signalLabDownloadHandler(w http.ResponseWriter, r *http.Request) {
+	// 1. 顶级防御：panic recovery
+	defer func() {
+		if err := recover(); err != nil {
+			logger.Error("[LAB-API] 下载接口 Panic: %v", err)
+			http.Error(w, "服务器内部崩溃", http.StatusInternalServerError)
+		}
+	}()
+
 	idStr := r.URL.Query().Get("job_id")
 	if idStr == "" {
-		respondBadRequest(w, "缺少 job_id 参数")
+		http.Error(w, "缺少 job_id 参数", http.StatusBadRequest)
 		return
 	}
 	jobID, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		respondBadRequest(w, "job_id 格式无效")
+		http.Error(w, "job_id 格式无效", http.StatusBadRequest)
 		return
 	}
 
+	// 2. 数据防御：严格校验 Job 记录
 	job, err := db.GetLabJob(jobID)
-	if err != nil {
-		respondBadRequest(w, fmt.Sprintf("任务 #%d 不存在", jobID))
+	if err != nil || job == nil {
+		http.Error(w, fmt.Sprintf("未找到任务 #%d 的记录", jobID), http.StatusNotFound)
 		return
 	}
 
 	if job.Status != "completed" {
-		respondBadRequest(w, fmt.Sprintf("任务 #%d 状态为 %s，尚未完成", jobID, job.Status))
+		http.Error(w, fmt.Sprintf("任务 #%d 状态为 %s，尚未完成", jobID, job.Status), http.StatusBadRequest)
 		return
 	}
 
 	if job.FilePath == "" {
-		respondBadRequest(w, "任务完成但无文件路径")
+		http.Error(w, "任务完成但无文件路径", http.StatusInternalServerError)
 		return
 	}
 
-	f, err := os.Open(job.FilePath)
-	if err != nil {
-		respondInternalError(w, fmt.Errorf("打开文件失败: %w", err))
+	// 3. 物理防御：确认文件在磁盘上存在
+	if _, err := os.Stat(job.FilePath); os.IsNotExist(err) {
+		http.Error(w, fmt.Sprintf("文件在服务器上丢失: %s", job.FilePath), http.StatusNotFound)
 		return
 	}
-	defer f.Close()
 
+	// 4. 协议防御：filename 必须用双引号包裹，防止策略名中的特殊字符破坏响应头
 	filename := fmt.Sprintf("signal_lab_%s_%d.csv", job.Strategy, jobID)
-	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
-	io.Copy(w, f)
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+	w.Header().Set("Content-Type", "text/csv")
+
+	http.ServeFile(w, r, job.FilePath)
 }

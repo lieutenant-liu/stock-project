@@ -96,12 +96,11 @@ const api = {
   runSignalLab: (payload) => request("/api/signallab/run", { method: "POST", body: payload }),
   listSignalLabJobs: (limit = 20) => request("/api/signallab/jobs", { params: { limit } }),
   downloadSignalLabCSV: (jobId) => {
-    const link = document.createElement('a')
-    link.href = `/api/signallab/download?job_id=${jobId}`
-    link.download = ''
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
+    // 强制拼接后端真实地址，绕过前端代理
+    const backendUrl = `http://${window.location.hostname}:8081`;
+    const downloadUrl = `${backendUrl}/api/signallab/download?job_id=${jobId}`;
+    // Content-Disposition: attachment 会让浏览器拦截为文件下载，不会跳转页面
+    window.location.href = downloadUrl;
   },
 };
 

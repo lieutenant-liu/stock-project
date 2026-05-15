@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -11,11 +12,15 @@ import (
 	"stock-backend/autosync"
 	"stock-backend/db"
 	"stock-backend/feeder"
+	"stock-backend/logger"
 	"syscall"
 	"time"
 )
 
 var autoSyncManager = autosync.NewManager()
+
+// 全局可取消 context：用于通知所有引擎在退出时立即停手
+var appCtx, appCancel = context.WithCancel(context.Background())
 
 // startDynamicLighthouse 自动嗅探网卡并计算子网广播地址。
 func startDynamicLighthouse() {
@@ -68,8 +73,22 @@ func startDynamicLighthouse() {
 }
 
 func main() {
+	// 飞行记录仪：最先启动，确保后续所有子系统的日志都能被记录
+	if err := logger.Init("logs/blackbox.log"); err != nil {
+		log.Fatalf("日志系统初始化失败: %v", err)
+	}
+	defer logger.Close()
+	logger.Info("=== 系统启动 ===")
+
+	// 将标准 log 包输出重定向到日志文件（捕获 log.Fatal / log.Printf）
+	log.SetOutput(io.MultiWriter(os.Stderr, logger.Writer()))
+
 	// 启动顺序：先初始化存储与配置，再启动后台任务与 HTTP 服务。
 	db.InitDB()
+
+	// 清理上次崩溃遗留的僵尸任务（服务启动时执行一次）
+	_ = db.MarkStaleRunningLabJobsFailed("服务重启，任务中断")
+
 	syncActiveProviderToken("tushare")
 	autoSyncManager.Start()
 	startDynamicLighthouse()
@@ -89,12 +108,25 @@ func main() {
 
 	go func() {
 		sig := <-sigCh
-		// 收到退出信号时，先把运行中的任务标记为失败，再执行优雅停机。
 		feeder.LogMsg("🛑 [系统] 收到退出信号: %s，正在执行安全退出...", sig.String())
+
+		// 1. 立即通知所有引擎停手
+		appCancel()
+
+		// 2. 标记僵尸任务
 		_ = db.MarkStaleRunningRunStepsFailed("人工中断，步骤未完成")
 		_ = db.MarkStaleRunningRunsFailed("人工中断，任务未完成")
+		_ = db.MarkStaleRunningLabJobsFailed("人工中断，任务未完成")
 
-		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		// 3. 强杀闹钟：3 秒后物理退出，防止僵死
+		time.AfterFunc(3*time.Second, func() {
+			logger.Error("[系统] 优雅退出超时，强制退出")
+			logger.Close()
+			os.Exit(1)
+		})
+
+		// 4. 优雅关闭 HTTP 服务
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		if err := server.Shutdown(ctx); err != nil {
 			feeder.LogMsg("⚠️ [系统] 优雅退出失败: %v", err)
@@ -104,5 +136,7 @@ func main() {
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("服务启动失败: %v", err)
 	}
+	logger.Info("[系统] 挥手告别，日志已安全封存")
+	logger.Close()
 	feeder.LogMsg("👋 [系统] 服务已退出")
 }

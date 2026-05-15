@@ -97,3 +97,23 @@ func FailLabJob(id int64, errMsg string) error {
 	)
 	return err
 }
+
+// MarkStaleRunningLabJobsFailed 将所有卡在 running/pending 状态的任务标记为失败。
+// 用于服务启动时清理上次崩溃遗留的僵尸任务。
+func MarkStaleRunningLabJobsFailed(reason string) error {
+	if reason == "" {
+		reason = "服务重启，任务中断"
+	}
+	now := nowRFC3339BT()
+	_, err := DB.Exec(`
+		UPDATE signal_lab_jobs
+		SET status = 'failed',
+			finished_at = ?,
+			error_msg = CASE
+				WHEN error_msg IS NULL OR error_msg = '' THEN ?
+				ELSE error_msg || '; ' || ?
+			END
+		WHERE status IN ('running', 'pending')
+	`, now, reason, reason)
+	return err
+}

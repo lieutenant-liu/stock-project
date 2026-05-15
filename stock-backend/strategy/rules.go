@@ -635,9 +635,18 @@ func CheckHardStop(today tushare.DailyKLine, buyPrice, stopPct float64) (bool, f
 // ==========================================
 func GetActiveAnalyzers() []Analyzer {
 	return []Analyzer{
-		&MACBAnalyzer{}, // 均线收敛 (策略一)
-		&CBBMAnalyzer{}, // 中枢强势突破 (策略二，替换原 BBLU)
-		&PBMAAnalyzer{}, // 缩量回踩狙击 (策略四)
-		// &DSSAnalyzer{},  // ⚠️ 深海动量 (策略三，存在重大问题，暂时下线)
+		&MACBAnalyzer{}, // 均线收敛突破 (右侧)
+		&CBBMAnalyzer{}, // 中枢强势突破 (右侧)
+		&PBMAAnalyzer{}, // 缩量回踩狙击 (左侧，已带机构护盾)
+		// &DSSAnalyzer{},  // ⚠️ 深海动量 (存在重大问题，暂时下线)
+
+		// 实验版（叠加跳空陷阱 + 天量诱多 + K线实体过滤器）
+		&CBBMExpAnalyzer{base: &CBBMAnalyzer{}},
+		&PBMAExpAnalyzer{base: &PBMAAnalyzer{}},
+
+		// 复合回踩引擎（突破后回踩，回踩端锁死 EXP 过滤器）
+		&CompositePullbackAnalyzer{name: "均线突破回踩-EXP (MACB-P-EXP)", finder: &MACBAnchorFinder{baseAnalyzer: &MACBAnalyzer{}}},
+		&CompositePullbackAnalyzer{name: "箱体突破回踩-EXP (CBBM-P-EXP)", finder: &CBBMAnchorFinder{baseAnalyzer: &CBBMAnalyzer{}}},
+		&CompositePullbackAnalyzer{name: "高质箱体突破回踩-EXP (CBBM-EXP-P-EXP)", finder: &CBBMAnchorFinder{baseAnalyzer: &CBBMExpAnalyzer{base: &CBBMAnalyzer{}}}},
 	}
 }

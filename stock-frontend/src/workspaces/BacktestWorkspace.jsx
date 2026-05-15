@@ -209,8 +209,8 @@ function BacktestWorkspace() {
     const completedTasks = planResult.tasks.filter(t => t.status === 'completed' && t.result)
     if (completedTasks.length === 0) return null
 
-    const best = completedTasks.reduce((a, b) => (a.result?.total_return || 0) > (b.result?.total_return || 0) ? a : b)
-    const worst = completedTasks.reduce((a, b) => (a.result?.total_return || 0) < (b.result?.total_return || 0) ? a : b)
+    const best = completedTasks.reduce((a, b) => (a.result?.total_return_pct || 0) > (b.result?.total_return_pct || 0) ? a : b)
+    const worst = completedTasks.reduce((a, b) => (a.result?.total_return_pct || 0) < (b.result?.total_return_pct || 0) ? a : b)
 
     return (
       <section style={{ backgroundColor: '#1e1e2e', border: '1px solid #333', borderRadius: '10px', padding: '20px', marginBottom: '14px' }}>
@@ -242,11 +242,11 @@ function BacktestWorkspace() {
                     <td style={{ padding: '8px 10px', color: '#ccc' }}>{t.strategy}</td>
                     <td style={{ padding: '8px 10px', color: '#ccc' }}>{t.start_date}~{t.end_date}</td>
                     <td style={{ padding: '8px 10px', color: '#ccc' }}>{(t.initial_capital / 10000).toFixed(0)}万</td>
-                    <td style={{ padding: '8px 10px', color: r.total_return >= 0 ? '#14b143' : '#ef232a', fontWeight: 'bold' }}>
-                      {r.total_return?.toFixed(2)}%
+                    <td style={{ padding: '8px 10px', color: r.total_return_pct >= 0 ? '#14b143' : '#ef232a', fontWeight: 'bold' }}>
+                      {r.total_return_pct?.toFixed(2)}%
                     </td>
-                    <td style={{ padding: '8px 10px', color: '#ccc' }}>{r.win_rate?.toFixed(1)}%</td>
-                    <td style={{ padding: '8px 10px', color: '#f0ad4e' }}>{r.max_drawdown?.toFixed(2)}%</td>
+                    <td style={{ padding: '8px 10px', color: '#ccc' }}>{r.win_rate_pct?.toFixed(1)}%</td>
+                    <td style={{ padding: '8px 10px', color: '#f0ad4e' }}>{r.max_drawdown_pct?.toFixed(2)}%</td>
                     <td style={{ padding: '8px 10px', color: '#ccc' }}>{r.total_trades}</td>
                     <td style={{ padding: '8px 10px' }}>
                       {t.csv_path && (
@@ -265,7 +265,7 @@ function BacktestWorkspace() {
           </table>
         </div>
         <p style={{ color: '#666', fontSize: '0.8rem', margin: '8px 0 0 0' }}>
-          最优 <span style={{ color: '#14b143' }}>({best.result.total_return?.toFixed(2)}%)</span> / 最差 <span style={{ color: '#ef232a' }}>({worst.result.total_return?.toFixed(2)}%)</span> 已高亮。点击行查看详情。
+          最优 <span style={{ color: '#14b143' }}>({best.result.total_return_pct?.toFixed(2)}%)</span> / 最差 <span style={{ color: '#ef232a' }}>({worst.result.total_return_pct?.toFixed(2)}%)</span> 已高亮。点击行查看详情。
         </p>
       </section>
     )

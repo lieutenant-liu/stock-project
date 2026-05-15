@@ -99,6 +99,29 @@ func (p *PBMAAnalyzer) Analyze(ctx *SecurityContext) DiagnoseResult {
 		return DiagnoseResult{Signal: "观望 💤"}
 	}
 
+	// ── 机构级护盾 ──
+	// 1. 市值护盾：剔除30亿以下微盘股
+	if len(ctx.Fundamentals) > 0 {
+		latestFund := ctx.Fundamentals[len(ctx.Fundamentals)-1]
+		if latestFund.TotalMV < 300000 {
+			atomic.AddInt64(&pbmaFailFund, 1)
+			return DiagnoseResult{Signal: "观望 💤"}
+		}
+	}
+	// 2. 筹码护盾：底部获利盘必须充足
+	if ctx.CyqPerf != nil && ctx.CyqPerf.ProfitPct < 15.0 {
+		atomic.AddInt64(&pbmaFailFund, 1)
+		return DiagnoseResult{Signal: "观望 💤"}
+	}
+	// 3. 资金流护盾：必须净流入
+	if len(ctx.MoneyFlows) > 0 {
+		latestMf := ctx.MoneyFlows[len(ctx.MoneyFlows)-1]
+		if latestMf.NetMfVol <= 0 {
+			atomic.AddInt64(&pbmaFailFund, 1)
+			return DiagnoseResult{Signal: "观望 💤"}
+		}
+	}
+
 	today := klines[len(klines)-1]
 	n := len(klines)
 

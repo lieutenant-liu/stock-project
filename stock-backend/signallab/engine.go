@@ -1,6 +1,7 @@
 package signallab
 
 import (
+	"context"
 	"encoding/csv"
 	"fmt"
 	"log"
@@ -8,17 +9,45 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"stock-backend/backtest"
+	"stock-backend/logger"
 	"stock-backend/db"
 	"stock-backend/stockutil"
 	"stock-backend/strategy"
+	"stock-backend/sysmon"
 	"stock-backend/tushare"
+	"sync"
+	"sync/atomic"
+	"time"
 )
 
-const chunkSize = 50 // Termux 安全值
+// csvWriteRequest 用于 producer-consumer 模式：chunk 处理 goroutine 将结果发送给 CSV writer goroutine。
+type csvWriteRequest struct {
+	evals []*SignalEvaluation
+}
+
+// csvWriterLoop 单一消费者 goroutine，顺序写入 CSV（非线程安全的 csv.Writer 的唯一使用者）。
+func csvWriterLoop(writer *csv.Writer, resultsCh <-chan csvWriteRequest, done chan<- error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("[LAB] CSV Writer panic: %v\n%s", r, debug.Stack())
+			done <- fmt.Errorf("csv writer panic: %v", r)
+		}
+	}()
+	for req := range resultsCh {
+		if len(req.evals) > 0 {
+			if err := writeChunkToCSV(writer, req.evals); err != nil {
+				done <- err
+				return
+			}
+		}
+	}
+	writer.Flush()
+	done <- writer.Error()
+}
 
 // RunSignalLabJob 执行信号实验室任务（异步 goroutine 入口）。
-func RunSignalLabJob(jobID int64, cfg SignalLabConfig) {
-	// panic recovery
+func RunSignalLabJob(ctx context.Context, jobID int64, cfg SignalLabConfig) {
+	// panic recovery（主 goroutine）
 	defer func() {
 		if r := recover(); r != nil {
 			errMsg := fmt.Sprintf("panic: %v\n%s", r, debug.Stack())
@@ -81,40 +110,102 @@ func RunSignalLabJob(jobID int64, cfg SignalLabConfig) {
 
 	// 4. 选择策略
 	analyzers := backtest.SelectAnalyzers(cfg.Strategy)
-	log.Printf("[信号实验室] 股票池 %d 只, 策略 %s", len(targetPool), cfg.Strategy)
 
-	// 5. Chunk 流式遍历
+	// 5. 自适应资源调度
+	sysmon.Init()
+	chunkSize := sysmon.GetChunkSize()
+	maxWorkers := sysmon.GetMaxWorkers()
+	log.Printf("[信号实验室] 股票池 %d 只, 策略 %s, ChunkSize=%d, Workers=%d",
+		len(targetPool), cfg.Strategy, chunkSize, maxWorkers)
+
+	// 6. 启动 CSV writer goroutine（producer-consumer 模式）
+	resultsCh := make(chan csvWriteRequest) // 无缓冲：chunk 处理完即写，不囤积内存
+	csvDone := make(chan error, 1)
+	go csvWriterLoop(writer, resultsCh, csvDone)
+
+	// 7. 并发 chunk 处理
+	sem := make(chan struct{}, maxWorkers) // 信号量
+	var wg sync.WaitGroup
+	var processed int64
+	var totalSignals int64
+	var firstErr error
+	var errOnce sync.Once
+
 	total := len(targetPool)
-	processed := 0
-	totalSignals := 0
 
 	for i := 0; i < total; i += chunkSize {
+		select {
+		case <-ctx.Done():
+			logger.Warn("[LAB] 任务 #%d 收到取消指令，停止后续分发 (已分发 %d/%d)", jobID, i, total)
+			wg.Wait()
+			close(resultsCh)
+			_ = db.FailLabJob(jobID, "任务被取消")
+			return
+		default:
+		}
+
 		end := i + chunkSize
 		if end > total {
 			end = total
 		}
 		codes := targetPool[i:end]
 
-		chunk := backtest.LoadChunk(codes, lookbackStart, cfg.EndDate)
-		chunkEvals := scanChunkSignals(cfg, chunk, analyzers, isBullMarket, isStrongMarket)
+		wg.Add(1)
+		sem <- struct{}{} // 获取令牌（满时阻塞）
 
-		// 流式写入 CSV
-		if len(chunkEvals) > 0 {
-			if err := writeChunkToCSV(writer, chunkEvals); err != nil {
-				_ = db.FailLabJob(jobID, "写入CSV失败: "+err.Error())
-				return
+		go func(codes []string) {
+			defer wg.Done()
+			defer func() { <-sem }() // 释放令牌
+
+			// 每个 goroutine 独立 panic recovery
+			defer func() {
+				if r := recover(); r != nil {
+					errOnce.Do(func() {
+						firstErr = fmt.Errorf("goroutine panic: %v\n%s", r, debug.Stack())
+					})
+				}
+			}()
+
+			// 内存泄压检查
+			if sysmon.CheckMemoryBackpressure() {
+				time.Sleep(2 * time.Second)
 			}
-			totalSignals += len(chunkEvals)
-			chunkEvals = nil // 释放 GC
-		}
 
-		processed += len(codes)
-		progress := fmt.Sprintf("%d/%d (信号=%d)", processed, total, totalSignals)
-		_ = db.UpdateLabJobStatus(jobID, "running", progress)
-		log.Printf("[信号实验室] %s", progress)
+			// DB 加载 + 纯内存信号扫描
+			chunk := backtest.LoadChunk(codes, lookbackStart, cfg.EndDate)
+			chunkEvals := scanChunkSignals(cfg, chunk, analyzers, isBullMarket, isStrongMarket)
+
+			// 发送给 CSV writer（channel 有缓冲，非阻塞直到满）
+			resultsCh <- csvWriteRequest{evals: chunkEvals}
+
+			// 原子进度更新（throttled：每 3*chunkSize 只股票或到达终点时更新 DB）
+			n := atomic.AddInt64(&processed, int64(len(codes)))
+			s := atomic.AddInt64(&totalSignals, int64(len(chunkEvals)))
+			if n%int64(3*chunkSize) == 0 || n >= int64(total) {
+				progress := fmt.Sprintf("%d/%d (信号=%d)", n, total, s)
+				_ = db.UpdateLabJobStatus(jobID, "running", progress)
+				log.Printf("[信号实验室] %s", progress)
+			}
+		}(codes)
 	}
 
-	writer.Flush()
+	// 8. 等待所有 chunk 处理完成
+	wg.Wait()
+	close(resultsCh)
+
+	// 9. 等待 CSV writer 完成
+	csvErr := <-csvDone
+
+	// 10. 错误处理与收尾
+	if firstErr != nil {
+		_ = db.FailLabJob(jobID, firstErr.Error())
+		return
+	}
+	if csvErr != nil {
+		_ = db.FailLabJob(jobID, "写入CSV失败: "+csvErr.Error())
+		return
+	}
+
 	_ = db.FinishLabJob(jobID, filePath)
 	log.Printf("[信号实验室] 任务 #%d 完成 | 信号=%d | 文件=%s", jobID, totalSignals, filePath)
 }
@@ -128,7 +219,7 @@ func scanChunkSignals(
 ) []*SignalEvaluation {
 	var results []*SignalEvaluation
 
-	for _, code := range chunk.Codes {
+	for idx, code := range chunk.Codes {
 		klines := chunk.KLinesMap[code]
 		if len(klines) < 30 {
 			continue
@@ -137,7 +228,9 @@ func scanChunkSignals(
 		flows := chunk.FlowsMap[code]
 		cyqPerfs := chunk.CyqPerfMap[code]
 
+		logger.Info("[LAB] 准备处理股票: %s, 进度: %d/%d", code, idx+1, len(chunk.Codes))
 		evals := scanStockSignals(code, klines, funds, flows, cyqPerfs, cfg, analyzers, isBullMarket, isStrongMarket)
+		logger.Info("[LAB] 股票 %s 处理完成，生成信号: %d 笔", code, len(evals))
 		results = append(results, evals...)
 	}
 	return results
@@ -334,4 +427,3 @@ func writeChunkToCSV(writer *csv.Writer, evals []*SignalEvaluation) error {
 	writer.Flush()
 	return writer.Error()
 }
-
