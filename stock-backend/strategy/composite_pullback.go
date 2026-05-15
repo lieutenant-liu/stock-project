@@ -9,7 +9,7 @@ import (
 // =====================================================
 // 复合回踩引擎 (Composite Pullback Engine)
 // 捕捉"突破后缩量回踩支撑"的二次买入机会。
-// 回踩端强制锁死 EXP 级别过滤器。
+// 支持 EXP 过滤器开关，用于正交测试归因。
 // =====================================================
 
 // PullbackAnchor 锚点：记录突破日的位置、量能与支撑线。
@@ -30,21 +30,20 @@ func reject(msg string) DiagnoseResult {
 }
 
 // ─── 通用锚点扫描器 ───
-// 依赖 Analyzer 接口，可同时接受原版与实验版策略包装器。
 
 type anchorFinderImpl struct {
 	analyzer    Analyzer
-	minKLines   int                         // 调用 analyzer 所需的最少 K 线数
-	supportFunc func(klines []tushare.DailyKLine, idx int) float64 // 从锚点上下文计算支撑线
+	minKLines   int
+	supportFunc func(klines []tushare.DailyKLine, idx int) float64
 }
 
 func (f *anchorFinderImpl) FindAnchor(ctx *SecurityContext) *PullbackAnchor {
 	n := len(ctx.KLines)
-	scanStart := n - 1 - 20
-	if scanStart < f.minKLines {
-		scanStart = f.minKLines
-	}
-	for i := scanStart; i >= n-1-5; i-- {
+	for backDays := 5; backDays <= 30; backDays++ {
+		i := n - 1 - backDays
+		if i < f.minKLines {
+			continue
+		}
 		sub := &SecurityContext{
 			Code:         ctx.Code,
 			KLines:       ctx.KLines[:i+1],
@@ -101,8 +100,9 @@ func (f *CBBMAnchorFinder) FindAnchor(ctx *SecurityContext) *PullbackAnchor {
 // ─── 复合回踩分析器 ───
 
 type CompositePullbackAnalyzer struct {
-	name   string
-	finder AnchorFinder
+	name          string
+	finder        AnchorFinder
+	useExpFilters bool
 }
 
 func (c *CompositePullbackAnalyzer) Name() string     { return c.name }
@@ -142,21 +142,26 @@ func (c *CompositePullbackAnalyzer) Analyze(ctx *SecurityContext) DiagnoseResult
 		return DiagnoseResult{Signal: "观望 💤"}
 	}
 
-	// Step 3: 支撑线回踩确认 (±3%)
-	lowDist := math.Abs(today.Low-anchor.SupportLine) / anchor.SupportLine
-	if lowDist > 0.03 {
-		return DiagnoseResult{Signal: "观望 💤"}
+	// Step 3: 非对称支撑容差
+	toleranceUpper := anchor.SupportLine * 1.05
+	toleranceLower := anchor.SupportLine * 0.94
+	closeTolerance := anchor.SupportLine * 0.98
+
+	if today.Low > toleranceUpper {
+		return reject("未触及支撑带")
 	}
-	// 收盘必须站稳支撑线之上
-	if today.Close < anchor.SupportLine {
-		return DiagnoseResult{Signal: "观望 💤"}
+	if today.Low < toleranceLower {
+		return reject("盘中深度破位")
+	}
+	if today.Close < closeTolerance {
+		return reject("收盘未站稳支撑位")
 	}
 	// 必须是阳线
 	if today.Close <= today.Open {
 		return DiagnoseResult{Signal: "观望 💤"}
 	}
 
-	// Step 4: 缩量验证（复用 pbma.go 逻辑）
+	// Step 4: 缩量验证
 	totalVol := 0.0
 	pullbackDays := 0
 	for i := pullbackStart; i < pullbackEnd; i++ {
@@ -167,19 +172,19 @@ func (c *CompositePullbackAnalyzer) Analyze(ctx *SecurityContext) DiagnoseResult
 		return DiagnoseResult{Signal: "观望 💤"}
 	}
 	avgPullbackVol := totalVol / float64(pullbackDays)
-	if avgPullbackVol >= 0.5*anchor.Volume {
-		return DiagnoseResult{Signal: "观望 💤"}
+	if avgPullbackVol >= 0.7*anchor.Volume {
+		return reject("回踩期缩量不足")
 	}
 
-	// Step 5: EXP 过滤器（锁死）
-	yesterday := klines[len(klines)-2]
-	// 5a. 拦截微幅高开陷阱
-	if err := CheckGapTrap(today.Open, yesterday.Close); err != nil {
-		return reject("[EXP-P] " + err.Error())
-	}
-	// 5b. 拦截回踩日无资金承接（左侧逻辑，传入洗盘期均量）
-	if err := CheckVolumeTrap(today.Vol, 0, false, avgPullbackVol); err != nil {
-		return reject("[EXP-P] " + err.Error())
+	// Step 5: EXP 过滤器（条件执行）
+	if c.useExpFilters {
+		yesterday := klines[len(klines)-2]
+		if err := CheckGapTrap(today.Open, yesterday.Close); err != nil {
+			return reject("[EXP-P] " + err.Error())
+		}
+		if err := CheckVolumeTrap(today.Vol, 0, false, avgPullbackVol); err != nil {
+			return reject("[EXP-P] " + err.Error())
+		}
 	}
 
 	// Step 6: 上方空间检查

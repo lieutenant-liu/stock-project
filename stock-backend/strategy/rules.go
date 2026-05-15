@@ -644,9 +644,12 @@ func GetActiveAnalyzers() []Analyzer {
 		&CBBMExpAnalyzer{base: &CBBMAnalyzer{}},
 		&PBMAExpAnalyzer{base: &PBMAAnalyzer{}},
 
-		// 复合回踩引擎（突破后回踩，回踩端锁死 EXP 过滤器）
-		&CompositePullbackAnalyzer{name: "均线突破回踩-EXP (MACB-P-EXP)", finder: &MACBAnchorFinder{baseAnalyzer: &MACBAnalyzer{}}},
-		&CompositePullbackAnalyzer{name: "箱体突破回踩-EXP (CBBM-P-EXP)", finder: &CBBMAnchorFinder{baseAnalyzer: &CBBMAnalyzer{}}},
-		&CompositePullbackAnalyzer{name: "高质箱体突破回踩-EXP (CBBM-EXP-P-EXP)", finder: &CBBMAnchorFinder{baseAnalyzer: &CBBMExpAnalyzer{base: &CBBMAnalyzer{}}}},
+		// 复合回踩引擎（全排列正交测试：3锚点 × 2过滤模式）
+		&CompositePullbackAnalyzer{name: "均线突破回踩 (MACB-P)", finder: &MACBAnchorFinder{baseAnalyzer: &MACBAnalyzer{}}, useExpFilters: false},
+		&CompositePullbackAnalyzer{name: "均线突破回踩-EXP (MACB-P-EXP)", finder: &MACBAnchorFinder{baseAnalyzer: &MACBAnalyzer{}}, useExpFilters: true},
+		&CompositePullbackAnalyzer{name: "箱体突破回踩 (CBBM-P)", finder: &CBBMAnchorFinder{baseAnalyzer: &CBBMAnalyzer{}}, useExpFilters: false},
+		&CompositePullbackAnalyzer{name: "箱体突破回踩-EXP (CBBM-P-EXP)", finder: &CBBMAnchorFinder{baseAnalyzer: &CBBMAnalyzer{}}, useExpFilters: true},
+		&CompositePullbackAnalyzer{name: "高质箱体突破回踩 (CBBM-EXP-P)", finder: &CBBMAnchorFinder{baseAnalyzer: &CBBMExpAnalyzer{base: &CBBMAnalyzer{}}}, useExpFilters: false},
+		&CompositePullbackAnalyzer{name: "高质箱体突破回踩-EXP (CBBM-EXP-P-EXP)", finder: &CBBMAnchorFinder{baseAnalyzer: &CBBMExpAnalyzer{base: &CBBMAnalyzer{}}}, useExpFilters: true},
 	}
 }

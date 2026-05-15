@@ -24,8 +24,11 @@ const allStrategies = [
   { value: 'PBMA', label: 'PBMA 缩量回踩狙击' },
   { value: 'CBBM-EXP', label: 'CBBM-EXP 中枢突破-实验' },
   { value: 'PBMA-EXP', label: 'PBMA-EXP 缩量回踩-实验' },
+  { value: 'MACB-P', label: 'MACB-P 均线突破回踩' },
   { value: 'MACB-P-EXP', label: 'MACB-P-EXP 均线突破回踩' },
+  { value: 'CBBM-P', label: 'CBBM-P 箱体突破回踩' },
   { value: 'CBBM-P-EXP', label: 'CBBM-P-EXP 箱体突破回踩' },
+  { value: 'CBBM-EXP-P', label: 'CBBM-EXP-P 高质箱体回踩' },
   { value: 'CBBM-EXP-P-EXP', label: 'CBBM-EXP-P-EXP 高质箱体回踩' },
 ]
 

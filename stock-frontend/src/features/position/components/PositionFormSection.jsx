@@ -30,8 +30,11 @@ function PositionFormSection({ posForm, setPosForm, handleAddPosition }) {
           <option value="PBMA 缩量回踩狙击 (PBMA)">PBMA 缩量回踩</option>
           <option value="中枢强势突破-实验 (CBBM-EXP)">CBBM-EXP 中枢突破-实验</option>
           <option value="缩量回踩狙击-实验 (PBMA-EXP)">PBMA-EXP 缩量回踩-实验</option>
+          <option value="均线突破回踩 (MACB-P)">MACB-P 均线突破回踩</option>
           <option value="均线突破回踩-EXP (MACB-P-EXP)">MACB-P-EXP 均线突破回踩</option>
+          <option value="箱体突破回踩 (CBBM-P)">CBBM-P 箱体突破回踩</option>
           <option value="箱体突破回踩-EXP (CBBM-P-EXP)">CBBM-P-EXP 箱体突破回踩</option>
+          <option value="高质箱体突破回踩 (CBBM-EXP-P)">CBBM-EXP-P 高质箱体回踩</option>
           <option value="高质箱体突破回踩-EXP (CBBM-EXP-P-EXP)">CBBM-EXP-P-EXP 高质箱体回踩</option>
         </select>
       </div>
