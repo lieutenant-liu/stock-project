@@ -90,6 +90,29 @@ class MainActivity : AppCompatActivity() {
             var attempts = 0
             val maxAttempts = 30 // 最多等 15 秒
             while (attempts < maxAttempts) {
+                // 检查进程是否已退出
+                if (goService.getExitCode() != null) {
+                    val exitCode = goService.getExitCode()
+                    val stderr = goService.getErrorOutput()
+                    val diag = buildString {
+                        appendLine("引擎进程已退出 (exit=$exitCode)")
+                        if (stderr.isNotEmpty()) {
+                            appendLine("--- 错误日志 ---")
+                            // 只取最后 500 字符避免 UI 溢出
+                            val tail = if (stderr.length > 500) stderr.takeLast(500) else stderr
+                            append(tail)
+                        } else {
+                            append("无错误输出，请检查 logcat [GoService] 标签")
+                        }
+                    }
+                    handler.post {
+                        statusText.text = diag
+                        statusText.textSize = 12f
+                        progressBar.visibility = View.GONE
+                    }
+                    return@Thread
+                }
+
                 try {
                     val conn = java.net.Socket()
                     conn.connect(java.net.InetSocketAddress("localhost", PORT.toInt()), 1000)
@@ -104,9 +127,24 @@ class MainActivity : AppCompatActivity() {
                     Thread.sleep(500)
                 }
             }
-            // 超时
+            // 超时：显示诊断信息
+            val stderr = goService.getErrorOutput()
+            val diag = buildString {
+                appendLine("引擎启动超时 (15s)")
+                if (goService.isRunning()) {
+                    appendLine("进程仍在运行，可能启动缓慢或端口未监听")
+                } else if (goService.getExitCode() != null) {
+                    appendLine("进程已退出 (exit=${goService.getExitCode()})")
+                }
+                if (stderr.isNotEmpty()) {
+                    appendLine("--- 错误日志 ---")
+                    val tail = if (stderr.length > 500) stderr.takeLast(500) else stderr
+                    append(tail)
+                }
+            }
             handler.post {
-                statusText.text = "引擎启动超时，请重启应用"
+                statusText.text = diag
+                statusText.textSize = 12f
                 progressBar.visibility = View.GONE
             }
         }.start()
