@@ -1,4 +1,4 @@
-name: Release Windows
+name: Release All Platforms
 
 on:
   push:
@@ -54,6 +54,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25'
+          cache-dependency-path: stock-backend/go.sum
 
       - name: Download frontend dist
         uses: actions/download-artifact@v4
@@ -88,10 +89,8 @@ jobs:
         include:
           - goarch: arm
             goarm: '7'
-            apk_arch: armeabi-v7a
             output: StockTerminal-armv7.apk
           - goarch: arm64
-            apk_arch: arm64-v8a
             output: StockTerminal-arm64.apk
     steps:
       - uses: actions/checkout@v4
@@ -99,6 +98,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25'
+          cache-dependency-path: stock-backend/go.sum
 
       - uses: actions/setup-java@v4
         with:
@@ -119,39 +119,42 @@ jobs:
           name: frontend-dist
           path: frontend-dist/
 
-      - name: Copy frontend to web/ and build Go binary
+      - name: Copy frontend to web/
+        run: cp -r frontend-dist/* stock-backend/web/
+
+      # GOOS=linux 而非 android：Termux 本质是 Linux 用户空间，
+      # sysmon 通过 /proc/version 检测 Android 并自动切换 TierMobile。
+      # GOOS=android 需要 CGO（NDK），GOOS=linux + CGO_ENABLED=0 可纯 Go 交叉编译。
+      - name: Build Go Binary for Android
         working-directory: stock-backend
         env:
-          GOOS: android
+          GOOS: linux
           GOARCH: ${{ matrix.goarch }}
           GOARM: ${{ matrix.goarm }}
           CGO_ENABLED: '0'
-        run: |
-          cp -r ../frontend-dist/* web/
-          go build -ldflags="-s -w" -o stock-terminal .
+        run: go build -ldflags="-s -w" -o stock-terminal .
 
       - name: Place binary in Android assets
         run: cp stock-backend/stock-terminal stock-android/app/src/main/assets/stock-terminal
 
       - name: Build APK
         working-directory: stock-android
-        run: ./gradlew assembleRelease
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease
 
       - name: Sign APK with debug key
         run: |
-          # 生成 debug keystore
           keytool -genkeypair -v -keystore /tmp/debug.keystore \
             -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
             -storepass android -keypass android \
             -dname "CN=Debug, OU=Debug, O=Debug, L=Debug, S=Debug, C=US"
 
-          # 签名 APK
           APK_IN=$(find stock-android/app/build/outputs/apk/release -name "*.apk" | head -1)
           jarsigner -verbose -sigalg SHA256withRSA -digestalg SHA-256 \
             -keystore /tmp/debug.keystore -storepass android -keypass android \
             "$APK_IN" androiddebugkey
 
-          # zipalign
           ${ANDROID_HOME}/build-tools/34.0.0/zipalign -v 4 "$APK_IN" "${{ matrix.output }}"
 
       - name: Upload APK artifact
@@ -161,8 +164,10 @@ jobs:
           path: ${{ matrix.output }}
 
   # ── Job 4: 创建 GitHub Release ──
+  # if: always() 确保即使 Android 构建部分失败，已有产物仍会发布
   release:
     needs: [build-binary, build-android]
+    if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
@@ -171,6 +176,10 @@ jobs:
           pattern: '*'
           path: artifacts/
           merge-multiple: true
+        continue-on-error: true
+
+      - name: List release files
+        run: find artifacts/ -type f | sort
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
