@@ -79,6 +79,36 @@ class MainActivity : AppCompatActivity() {
 
         // 启动 Go 服务
         goService = GoService(this)
+
+        // 设置进程退出回调：立即检测崩溃，不等待超时
+        goService.onProcessExited = { exitCode, errorOutput ->
+            val diag = buildString {
+                appendLine("引擎进程已退出 (exit=$exitCode)")
+                if (errorOutput.isNotEmpty()) {
+                    appendLine("--- 错误日志 ---")
+                    // 只取最后 500 字符避免 UI 溢出
+                    val tail = if (errorOutput.length > 500) errorOutput.takeLast(500) else errorOutput
+                    append(tail)
+                } else {
+                    append("无错误输出，请检查 logcat [GoService] 标签")
+                }
+            }
+            handler.post {
+                statusText.text = diag
+                statusText.textSize = 12f
+                progressBar.visibility = View.GONE
+            }
+        }
+
+        // 设置二进制文件提取失败回调
+        goService.onExtractionFailed = { reason ->
+            handler.post {
+                statusText.text = "启动失败: $reason"
+                statusText.textSize = 14f
+                progressBar.visibility = View.GONE
+            }
+        }
+
         goService.start()
 
         // 等待 Go 服务就绪后加载页面

@@ -21,6 +21,12 @@ class GoService(private val context: Context) {
     @Volatile
     private var lastErrorOutput: String = ""
 
+    // 回调接口：进程退出时通知调用方
+    var onProcessExited: ((exitCode: Int, errorOutput: String) -> Unit)? = null
+
+    // 回调接口：二进制文件提取失败时通知调用方
+    var onExtractionFailed: ((reason: String) -> Unit)? = null
+
     fun start() {
         if (process != null) return
 
@@ -29,6 +35,7 @@ class GoService(private val context: Context) {
                 val binary = extractBinary()
                 if (binary == null) {
                     Log.e(TAG, "Binary extraction failed")
+                    onExtractionFailed?.invoke("无法提取Go二进制文件，请检查APK是否完整")
                     return@Thread
                 }
 
@@ -77,8 +84,12 @@ class GoService(private val context: Context) {
                 if (lastErrorOutput.isNotEmpty()) {
                     Log.e(TAG, "Go stderr output:\n$lastErrorOutput")
                 }
+
+                // 通知调用方进程已退出
+                onProcessExited?.invoke(exitCode, lastErrorOutput)
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to start Go process", e)
+                onExtractionFailed?.invoke("启动Go进程失败: ${e.message}")
             } finally {
                 process = null
             }
