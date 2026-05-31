@@ -8,6 +8,7 @@ import PositionRiskWorkspace from './workspaces/PositionRiskWorkspace'
 import DataAuditWorkspace from './workspaces/DataAuditWorkspace'
 import BacktestWorkspace from './workspaces/BacktestWorkspace'
 import SignalLabWorkspace from './workspaces/SignalLabWorkspace'
+import StrategyManagerWorkspace from './workspaces/StrategyManagerWorkspace'
 import './App.css'
 
 function App() {
@@ -25,6 +26,7 @@ function App() {
     { id: 'position', label: '持仓风控', desc: '持仓录入与风险建议' },
     { id: 'audit', label: '数据体检', desc: '数据完整性核查' },
     { id: 'token', label: 'Token管理', desc: '多凭证与激活策略' },
+    { id: 'strategyMgr', label: '策略管理', desc: '策略原理、胜率与开关控制' },
   ]
 
   const activateSection = (sectionId) => {
@@ -119,6 +121,11 @@ function App() {
           {mountedSections.has('token') && (
             <div style={{ display: activeSection === 'token' ? 'block' : 'none' }}>
               <TokenManagerPanel onTokenActivated={() => {}} />
+            </div>
+          )}
+          {mountedSections.has('strategyMgr') && (
+            <div style={{ display: activeSection === 'strategyMgr' ? 'block' : 'none' }}>
+              <StrategyManagerWorkspace />
             </div>
           )}
         </section>

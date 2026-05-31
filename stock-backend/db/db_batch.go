@@ -209,3 +209,40 @@ func LoadStockNameMap() map[string]string {
 	}
 	return result
 }
+
+// BatchGetFinaIndicators 批量获取季报财务指标（ROE, NetProfitYoY, CFPS）。
+func BatchGetFinaIndicators(codes []string, startDate, endDate string) map[string][]tushare.FinaIndicator {
+	result := make(map[string][]tushare.FinaIndicator)
+	if len(codes) == 0 {
+		return result
+	}
+
+	placeholders := buildPlaceholders(len(codes))
+	query := fmt.Sprintf(`
+		SELECT ts_code, ann_date, end_date, roe, netprofit_yoy, cfps
+		FROM fina_indicators
+		WHERE ts_code IN (%s) AND ann_date >= ? AND ann_date <= ?
+		ORDER BY ts_code, ann_date ASC
+	`, placeholders)
+
+	var args []interface{}
+	for _, code := range codes {
+		args = append(args, code)
+	}
+	args = append(args, startDate, endDate)
+
+	rows, err := DB.Query(query, args...)
+	if err != nil {
+		log.Printf("批量拉取财务指标失败: %v\n", err)
+		return result
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var f tushare.FinaIndicator
+		if err := rows.Scan(&f.TSCode, &f.AnnDate, &f.EndDate, &f.ROE, &f.NetProfitYOY, &f.CFPS); err == nil {
+			result[f.TSCode] = append(result[f.TSCode], f)
+		}
+	}
+	return result
+}

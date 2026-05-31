@@ -43,4 +43,8 @@ func registerRoutes() {
 	http.HandleFunc("/api/position/add", api.AddPositionHandler)
 	http.HandleFunc("/api/position/list", api.GetPositionsHandler)
 	http.HandleFunc("/api/position/delete", api.DeletePositionHandler)
+	http.HandleFunc("/api/strategies", StrategyRouter)
+	http.HandleFunc("/api/strategies/", StrategyRouter)
+	http.HandleFunc("/api/config/engine", EngineConfigRouter)
+	http.HandleFunc("/api/config/engine/", EngineConfigRouter)
 }

@@ -197,9 +197,9 @@ func tierConfig(tier Tier) ResourceConfig {
 	switch tier {
 	case TierMobile:
 		return ResourceConfig{
-			ChunkSize:  30, // 平衡吞吐与内存峰值
-			MaxWorkers: 2,  // 双线并发，平板多核可承受
-			GCPercent:  60, // 平衡 GC 频率与计算速度
+			ChunkSize:  50, // 大块加载降低跨边界 I/O 频率，SQLite 批量读取效率最大化
+			MaxWorkers: 4,  // 4 核并发，8 核平板用一半算力
+			GCPercent:  80, // 降低 GC 抢占，把 CPU 算力让给指标计算
 			MemHighPct: 60,
 			MemCritPct: 75,
 		}

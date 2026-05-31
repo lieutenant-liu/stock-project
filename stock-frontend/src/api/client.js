@@ -102,6 +102,14 @@ const api = {
     // Content-Disposition: attachment 会让浏览器拦截为文件下载，不会跳转页面
     window.location.href = downloadUrl;
   },
+  // 策略管理
+  listStrategies: () => request("/api/strategies"),
+  listActiveStrategies: () => request("/api/strategies/active"),
+  toggleStrategy: (id, isEnabled) => request("/api/strategies/toggle", { method: "POST", body: { id, is_enabled: isEnabled } }),
+  // 引擎子策略配置
+  getEngineConfig: () => request("/api/config/engine"),
+  toggleEngineConfig: (key, enabled) => request("/api/config/engine/toggle", { method: "POST", body: { key, enabled } }),
+  updateExitProfile: (profile) => request("/api/config/engine/profile", { method: "POST", body: { profile } }),
 };
 
 export default api;

@@ -275,7 +275,7 @@ func scanStockSignals(
 		}
 
 		ctx := backtest.BuildStockContext(code, klines, funds, flows,
-			fundMap, flowMap, cyqMap, i, todayDate)
+			fundMap, flowMap, cyqMap, nil, i, todayDate)
 		if ctx == nil || len(ctx.KLines) < 30 {
 			continue
 		}

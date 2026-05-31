@@ -26,6 +26,7 @@ type SecurityContext struct {
 	MoneyFlows   []tushare.DailyMoneyFlow // 2000积分王牌：资金流向数据
 	PEPercentile float64                  // 💥 新增：动态估值历史分位 (0.0 ~ 1.0)
 	CyqPerf      *tushare.CyqPerf         // 💥 筹码分布数据 (5000积分高阶)
+	LatestFina   *tushare.FinaIndicator   // 最新季报财务指标 (ROE, NetProfitYoY)
 }
 
 // Analyzer 多态策略引擎接口定义 (Strategy Pattern)

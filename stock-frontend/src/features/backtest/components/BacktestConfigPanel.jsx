@@ -1,3 +1,6 @@
+import { useState, useEffect } from 'react'
+import api from '../../../api/client'
+
 const inputStyle = {
   backgroundColor: '#111',
   color: '#fff',
@@ -36,11 +39,25 @@ const allStrategies = [
 ]
 
 function BacktestConfigPanel({ config, setConfig, onRun, loading, result, activeJob, activeJobId }) {
+  const [dynamicStrategies, setDynamicStrategies] = useState(null)
+
+  useEffect(() => {
+    api.listActiveStrategies().then(res => {
+      if (res.code === 200 && res.strategies) {
+        setDynamicStrategies(res.strategies.map(s => ({
+          value: s.id,
+          label: `${s.name} (${s.category}) | 胜率: ${s.win_rate}%`,
+        })))
+      }
+    }).catch(() => {})
+  }, [])
+
+  const strategies = dynamicStrategies || allStrategies
   const update = (key, value) => setConfig((prev) => ({ ...prev, [key]: value }))
 
   // 策略多选逻辑
   const selectedStrategies = config.strategy === 'ALL' || config.strategy === ''
-    ? allStrategies.map(s => s.value)
+    ? strategies.map(s => s.value)
     : config.strategy.split(',').map(s => s.trim()).filter(Boolean)
 
   const toggleStrategy = (val) => {
@@ -51,7 +68,7 @@ function BacktestConfigPanel({ config, setConfig, onRun, loading, result, active
       next = [...selectedStrategies, val]
     }
     // 全选 = ALL，全不选也回退为 ALL
-    update('strategy', next.length === allStrategies.length || next.length === 0 ? 'ALL' : next.join(','))
+    update('strategy', next.length === strategies.length || next.length === 0 ? 'ALL' : next.join(','))
   }
 
   const onExport = () => {
@@ -86,7 +103,7 @@ function BacktestConfigPanel({ config, setConfig, onRun, loading, result, active
         <div style={{ ...fieldStyle, minWidth: '240px' }}>
           <label style={labelStyle}>策略选择（可多选）</label>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 14px', padding: '6px 0' }}>
-            {allStrategies.map(s => (
+            {strategies.map(s => (
               <label key={s.value} style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: '#ccc', fontSize: '0.85rem' }}>
                 <input
                   type="checkbox"
@@ -101,6 +118,11 @@ function BacktestConfigPanel({ config, setConfig, onRun, loading, result, active
         <div style={fieldStyle}>
           <label style={labelStyle}>手续费率</label>
           <input style={inputStyle} type="number" step="0.0001" value={config.commission} onChange={(e) => update('commission', +e.target.value)} />
+        </div>
+        <div style={fieldStyle}>
+          <label style={labelStyle}>单笔基准仓位</label>
+          <input style={inputStyle} type="number" step="0.05" min="0.05" max="1" value={config.position_size_pct} onChange={(e) => update('position_size_pct', +e.target.value)} />
+          <span style={{ color: '#666', fontSize: '0.7rem' }}>基础仓位。王牌信号动态翻倍至最大 40%</span>
         </div>
       </div>
       <div style={{ marginTop: '16px', display: 'flex', gap: '12px' }}>

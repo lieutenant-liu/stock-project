@@ -2,6 +2,7 @@ package backtest
 
 import (
 	"fmt"
+	"stock-backend/db"
 	"stock-backend/strategy"
 	"stock-backend/tushare"
 	"strings"
@@ -18,7 +19,14 @@ func SubtractDays(dateStr string, n int) string {
 }
 
 func SelectAnalyzers(name string) []strategy.Analyzer {
-	all := strategy.GetActiveAnalyzers()
+	// 从 DB 读取已启用策略集合
+	enabledStrategies, _ := db.GetEnabledStrategies()
+	enabledSet := make(map[string]bool, len(enabledStrategies))
+	for _, s := range enabledStrategies {
+		enabledSet[s.ID] = true
+	}
+	all := strategy.GetActiveAnalyzersFiltered(enabledSet)
+
 	upper := strings.ToUpper(strings.TrimSpace(name))
 	if upper == "ALL" || upper == "" {
 		return all

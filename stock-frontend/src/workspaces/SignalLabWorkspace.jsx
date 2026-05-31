@@ -18,19 +18,7 @@ const statusLabels = {
   failed: '失败',
 }
 
-const allStrategies = [
-  { value: 'MACB', label: 'MACB 均线收敛突破' },
-  { value: 'CBBM', label: 'CBBM 中枢强势突破' },
-  { value: 'PBMA', label: 'PBMA 缩量回踩狙击' },
-  { value: 'CBBM-EXP', label: 'CBBM-EXP 中枢突破-实验' },
-  { value: 'PBMA-EXP', label: 'PBMA-EXP 缩量回踩-实验' },
-  { value: 'MACB-P', label: 'MACB-P 均线突破回踩' },
-  { value: 'MACB-P-EXP', label: 'MACB-P-EXP 均线突破回踩' },
-  { value: 'CBBM-P', label: 'CBBM-P 箱体突破回踩' },
-  { value: 'CBBM-P-EXP', label: 'CBBM-P-EXP 箱体突破回踩' },
-  { value: 'CBBM-EXP-P', label: 'CBBM-EXP-P 高质箱体回踩' },
-  { value: 'CBBM-EXP-P-EXP', label: 'CBBM-EXP-P-EXP 高质箱体回踩' },
-]
+// 策略列表从后端动态加载
 
 const inputStyle = {
   backgroundColor: '#111',
@@ -56,24 +44,30 @@ const fieldStyle = {
 }
 
 function SignalLabWorkspace() {
-  const [selectedStrategies, setSelectedStrategies] = useState(allStrategies.map(s => s.value))
-
-  const toggleStrategy = (val) => {
-    setSelectedStrategies(prev => {
-      if (prev.includes(val)) return prev.filter(s => s !== val)
-      return [...prev, val]
-    })
-  }
-
-  const strategyValue = selectedStrategies.length === allStrategies.length || selectedStrategies.length === 0
-    ? 'ALL'
-    : selectedStrategies.join(',')
+  // All hooks must be declared before any conditional returns (React Rules of Hooks)
+  const [allStrategies, setAllStrategies] = useState([])
+  const [selectedStrategies, setSelectedStrategies] = useState([])
   const [startDate, setStartDate] = useState(defaultRange.start)
   const [endDate, setEndDate] = useState(defaultRange.end)
   const [loading, setLoading] = useState(false)
   const [jobs, setJobs] = useState([])
   const [error, setError] = useState('')
   const pollRef = useRef(null)
+
+  useEffect(() => {
+    api.listActiveStrategies().then(res => {
+      if (res.code === 200 && res.strategies) {
+        const mapped = res.strategies.map(s => ({
+          value: s.id,
+          label: `${s.name} (${s.category}) | 胜率: ${s.win_rate}%`,
+          category: s.category,
+          winRate: s.win_rate,
+        }))
+        setAllStrategies(mapped)
+        setSelectedStrategies(mapped.map(s => s.value))
+      }
+    }).catch(() => {})
+  }, [])
 
   const loadJobs = useCallback(async () => {
     try {
@@ -98,6 +92,27 @@ function SignalLabWorkspace() {
       if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
     }
   }, [jobs, loadJobs])
+
+  const toggleStrategy = (val) => {
+    setSelectedStrategies(prev => {
+      if (prev.includes(val)) return prev.filter(s => s !== val)
+      return [...prev, val]
+    })
+  }
+
+  const strategyValue = selectedStrategies.length === allStrategies.length || selectedStrategies.length === 0
+    ? 'ALL'
+    : selectedStrategies.join(',')
+
+  // 策略列表未加载时显示占位（所有 hooks 已在上方声明）
+  if (allStrategies.length === 0) {
+    return (
+      <div style={{ color: '#aaa', padding: 40, textAlign: 'center' }}>
+        <p style={{ fontSize: '1.1rem', marginBottom: '8px' }}>暂无启用的策略</p>
+        <p style={{ fontSize: '0.85rem', color: '#666' }}>请前往「策略管理」开启至少一个策略。</p>
+      </div>
+    )
+  }
 
   const runLab = async () => {
     setLoading(true)

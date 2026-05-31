@@ -55,15 +55,48 @@ func (p *PBMAExpAnalyzer) Analyze(ctx *SecurityContext) DiagnoseResult {
 		return result
 	}
 
-	today := ctx.KLines[len(ctx.KLines)-1]
-	yesterday := ctx.KLines[len(ctx.KLines)-2]
-	volMa20 := CalcVolMA(ctx.KLines, 20)
+	klines := ctx.KLines
+	n := len(klines)
+	today := klines[n-1]
+	yesterday := klines[n-2]
+	volMa20 := CalcVolMA(klines, 20)
 
 	if err := CheckGapTrap(today.Open, yesterday.Close); err != nil {
 		return DiagnoseResult{Signal: "观望 💤", Message: "[EXP] " + err.Error()}
 	}
-	// PBMA 是左侧策略，avgPullbackVol 无法从包装器获取，传 0 跳过左侧检查
-	if err := CheckVolumeTrap(today.Vol, volMa20, false, 0); err != nil {
+
+	// 复用 PBMA 锚点检测 + 回调均量计算，获取真实 avgPullbackVol
+	avgPullbackVol := 0.0
+	if volMa20 > 0 {
+		anchorIdx := -1
+		scanStart := n - 1 - 15
+		if scanStart < 1 {
+			scanStart = 1
+		}
+		for i := scanStart; i < n-1; i++ {
+			prevClose := klines[i-1].Close
+			if prevClose <= 0 {
+				continue
+			}
+			pctChg := (klines[i].Close - prevClose) / prevClose
+			if pctChg > 0.05 && klines[i].Close > klines[i].Open && klines[i].Vol > 1.5*volMa20 {
+				anchorIdx = i
+			}
+		}
+		if anchorIdx >= 0 {
+			pullbackStart := anchorIdx + 1
+			pullbackEnd := n - 1
+			if pullbackStart < pullbackEnd {
+				totalVol := 0.0
+				for i := pullbackStart; i < pullbackEnd; i++ {
+					totalVol += klines[i].Vol
+				}
+				avgPullbackVol = totalVol / float64(pullbackEnd-pullbackStart)
+			}
+		}
+	}
+
+	if err := CheckVolumeTrap(today.Vol, volMa20, false, avgPullbackVol); err != nil {
 		return DiagnoseResult{Signal: "观望 💤", Message: "[EXP] " + err.Error()}
 	}
 	if err := CheckBodyRatio(today); err != nil {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -90,7 +91,7 @@ func backtestSubmitHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go runBacktestJob(jobID, cfg)
+	go runBacktestJob(appCtx, jobID, cfg)
 
 	respondOK(w, map[string]interface{}{
 		"job_id": jobID,
@@ -99,7 +100,7 @@ func backtestSubmitHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // runBacktestJob 异步执行回测任务。
-func runBacktestJob(jobID int64, cfg backtest.BacktestConfig) {
+func runBacktestJob(ctx context.Context, jobID int64, cfg backtest.BacktestConfig) {
 	// P0: 防止 panic 导致静默丢失任务
 	defer func() {
 		if r := recover(); r != nil {
@@ -116,7 +117,7 @@ func runBacktestJob(jobID int64, cfg backtest.BacktestConfig) {
 		log.Printf("[回测任务 #%d] 更新状态失败: %v", jobID, err)
 	}
 
-	result, err := backtest.RunV2(cfg)
+	result, err := backtest.RunV2(ctx, cfg)
 	if err != nil {
 		log.Printf("[回测任务 #%d] 失败: %v", jobID, err)
 		if err := db.FailBacktestJob(jobID, err.Error()); err != nil {
@@ -384,7 +385,7 @@ func planSubmitHandler(w http.ResponseWriter, r *http.Request) {
 		taskInputs[i] = backtest.PlanTaskInput{TaskID: t.ID, Config: cfg}
 	}
 
-	go runPlanJob(planID, taskInputs)
+	go runPlanJob(appCtx, planID, taskInputs)
 
 	respondOK(w, map[string]interface{}{
 		"plan_id":    planID,
@@ -394,7 +395,7 @@ func planSubmitHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // runPlanJob 异步执行回测计划。
-func runPlanJob(planID int64, tasks []backtest.PlanTaskInput) {
+func runPlanJob(ctx context.Context, planID int64, tasks []backtest.PlanTaskInput) {
 	// P0: 防止 panic 导致静默丢失计划
 	defer func() {
 		if r := recover(); r != nil {
@@ -411,7 +412,7 @@ func runPlanJob(planID int64, tasks []backtest.PlanTaskInput) {
 		log.Printf("[回测计划 #%d] 更新状态失败: %v", planID, err)
 	}
 
-	outputs := backtest.RunPlan(tasks, func(completed, total int) {
+	outputs := backtest.RunPlan(ctx, tasks, func(completed, total int) {
 		if err := db.UpdatePlanProgress(planID, completed); err != nil {
 			log.Printf("[回测计划 #%d] 更新进度失败: %v", planID, err)
 		}

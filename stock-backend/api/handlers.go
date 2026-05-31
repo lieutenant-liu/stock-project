@@ -93,7 +93,12 @@ func DiagnoseHandler(w http.ResponseWriter, r *http.Request) {
 	var results []map[string]interface{}
 
 	// 核心调度：唤醒已启用的策略分析器
-	activeAnalyzers := strategy.GetActiveAnalyzers()
+	enabledStrategies, _ := db.GetEnabledStrategies()
+	enabledSet := make(map[string]bool, len(enabledStrategies))
+	for _, s := range enabledStrategies {
+		enabledSet[s.ID] = true
+	}
+	activeAnalyzers := strategy.GetActiveAnalyzersFiltered(enabledSet)
 	// =========================================================
 	// [机构级风控：大盘环境与情绪冰点前置拦截]
 	// =========================================================

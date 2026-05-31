@@ -3,11 +3,41 @@ package strategy
 import (
 	"fmt"
 	"math"
+	"regexp"
 	"stock-backend/tushare"
 )
 
+// ExtractStrategyID 从策略 Name() 返回值中提取括号内的短码 ID。
+// 例: "均线收敛突破 (MACB)" → "MACB"
+var idRegexp = regexp.MustCompile(`\(([^)]+)\)`)
+
+func ExtractStrategyID(name string) string {
+	m := idRegexp.FindStringSubmatch(name)
+	if len(m) >= 2 {
+		return m[1]
+	}
+	return name
+}
+
+// GetActiveAnalyzersFiltered 返回 enabledIDs 集合中被启用的 Analyzer。
+// 调用方先从 DB 读取 enabled 策略 ID 集合，再传入过滤。
+func GetActiveAnalyzersFiltered(enabledIDs map[string]bool) []Analyzer {
+	all := GetActiveAnalyzers()
+	if len(enabledIDs) == 0 {
+		return all
+	}
+	var filtered []Analyzer
+	for _, a := range all {
+		id := ExtractStrategyID(a.Name())
+		if enabledIDs[id] {
+			filtered = append(filtered, a)
+		}
+	}
+	return filtered
+}
+
 // ==========================================
-// 🛡️ 全局公共基建：基本面防暴雷护盾 (升维版)
+// 🛡️ 全局公共基建：量化基本面防暴雷护盾 (终极版)
 // ==========================================
 func checkFundamentalShield(ctx *SecurityContext, strictMode bool) bool {
 	funds := ctx.Fundamentals
@@ -16,19 +46,24 @@ func checkFundamentalShield(ctx *SecurityContext, strictMode bool) bool {
 	}
 	latestFund := funds[len(funds)-1]
 
-	// 基础排雷线：亏损公司，或者历史估值分位处于 85% 以上的绝对泡沫区
-	isGarbage := latestFund.PE <= 0 || ctx.PEPercentile > 0.85
-
-	if strictMode {
-		// 严格模式：PE 必须处于历史低/中水位 (<60%)，且不是亏损股
-		if latestFund.PE <= 0 || ctx.PEPercentile > 0.60 {
-			return false
-		}
-		return true
+	// Rule 1: PE 必须为正（排除亏损股）且不能极端泡沫
+	if latestFund.PE <= 0 || latestFund.PE >= 100 {
+		return false
 	}
 
-	// 普通模式：只要不是亏损且极度泡沫即可
-	if isGarbage && latestFund.DVRatio < 1.0 { // 除非股息率兜底
+	// Rule 2 & 3: ROE 和净利润增速（如有季报数据）
+	if ctx.LatestFina != nil {
+		if ctx.LatestFina.ROE <= 5.0 {
+			return false // 盈利能力不足
+		}
+		if ctx.LatestFina.NetProfitYOY <= 0 {
+			return false // 利润负增长
+		}
+	}
+	// 无季报数据时降级为仅 PE 检查（向后兼容）
+
+	// Strict mode: 额外 PE 历史分位检查
+	if strictMode && ctx.PEPercentile > 0.60 {
 		return false
 	}
 

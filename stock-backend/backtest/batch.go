@@ -1,6 +1,7 @@
 package backtest
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"sort"
@@ -9,6 +10,7 @@ import (
 	"stock-backend/strategy"
 	"stock-backend/sysmon"
 	"strings"
+	"time"
 )
 
 // PlanTaskInput 单个回测任务的输入。
@@ -33,7 +35,8 @@ type dataSignature struct {
 
 // RunPlan 执行回测计划。
 // 核心优化：Chunk 为第一驱动轮，每个 Chunk 只查询一次 DB，组内所有任务共享。
-func RunPlan(tasks []PlanTaskInput, progressFn func(completed, total int)) []PlanTaskOutput {
+func RunPlan(ctx context.Context, tasks []PlanTaskInput, progressFn func(completed, total int)) []PlanTaskOutput {
+	sysmon.Init()
 	if len(tasks) == 0 {
 		return nil
 	}
@@ -57,7 +60,13 @@ func RunPlan(tasks []PlanTaskInput, progressFn func(completed, total int)) []Pla
 
 	// 3. 逐组执行
 	for _, group := range groups {
-		runTaskGroup(group, taskIdxMap, outputs, func() {
+		select {
+		case <-ctx.Done():
+			log.Printf("[回测计划] 收到取消指令，停止后续数据组")
+			return outputs
+		default:
+		}
+		runTaskGroup(ctx, group, taskIdxMap, outputs, func() {
 			completed++
 			if progressFn != nil {
 				progressFn(completed, len(tasks))
@@ -156,6 +165,7 @@ func normalizeConfig(cfg *BacktestConfig) {
 
 // runTaskGroup 执行一个数据组：Chunk 流式遍历 → 信号开采 → 组合推演。
 func runTaskGroup(
+	ctx context.Context,
 	group taskGroup,
 	taskIdxMap map[int64]int,
 	outputs []PlanTaskOutput,
@@ -197,6 +207,13 @@ func runTaskGroup(
 	isBullMarket := BuildMarketRegimeMap(indexData)
 	isStrongMarket := BuildStrongMarketMap(indexData)
 
+	// 读取引擎子策略配置
+	engineCfg, err := db.GetEngineConfig()
+	if err != nil {
+		log.Printf("[回测计划] 引擎配置读取失败，使用默认全开: %v", err)
+		engineCfg = db.EngineConfig{EnableRegimeRouter: true, EnableSignalAllocator: true, Enable3DExit: true}
+	}
+
 	// 为每个 task 准备信号收集器和 analyzer
 	type taskState struct {
 		input     PlanTaskInput
@@ -214,23 +231,49 @@ func runTaskGroup(
 	// ── Chunk 流式遍历：chunk 为第一驱动轮 ──
 	total := len(targetPool)
 	processed := 0
+	maxGroupSignals := MaxGroupSignals(len(group.tasks)) // P3: 组级信号容量
 
 	for i := 0; i < total; i += batchChunkSize {
+		// P2: 优雅退出检查
+		select {
+		case <-ctx.Done():
+			log.Printf("[回测计划] 收到取消指令，停止 Chunk 遍历 (已处理 %d/%d)", i, total)
+			// 标记未完成的任务为取消
+			for j := range states {
+				idx := taskIdxMap[states[j].input.TaskID]
+				if outputs[idx].Result == nil && outputs[idx].Error == nil {
+					outputs[idx] = PlanTaskOutput{TaskID: states[j].input.TaskID, Error: ctx.Err()}
+					onTaskComplete()
+				}
+			}
+			return
+		default:
+		}
+
 		end := i + batchChunkSize
 		if end > total {
 			end = total
 		}
 		codes := targetPool[i:end]
 
-		// 加载当前 chunk（5条SQL，仅查这50只）
+		// 加载当前 chunk（6条SQL，仅查这批股票）
 		chunk := LoadChunk(codes, lookbackStart, sig.endDate)
+
+		// P3: 检查组级信号总量是否已触及红线
+		groupTotal := 0
+		for j := range states {
+			groupTotal += len(states[j].signals)
+		}
+		if groupTotal >= maxGroupSignals {
+			log.Printf("[回测计划] 触及组级信号容量上限 %d（%d个任务），截断后续 Chunk", maxGroupSignals, len(states))
+			break
+		}
 
 		// 对组内每个 task 执行信号开采
 		for j := range states {
 			taskCfg := states[j].input.Config
-			// 如果任务的日期区间比组的区间窄，需要过滤信号
-			chunkSignals := MineChunkSignals(taskCfg, chunk, states[j].analyzers, isBullMarket, isStrongMarket)
-			// P1: 信号上限防 OOM
+			chunkSignals := MineChunkSignals(taskCfg, chunk, states[j].analyzers, isBullMarket, isStrongMarket, engineCfg)
+			// P1: 单任务信号上限
 			if len(states[j].signals)+len(chunkSignals) > MaxSignalsPerTask {
 				log.Printf("[回测计划] 任务 #%d 信号数已达上限 %d，截断", states[j].input.TaskID, MaxSignalsPerTask)
 				continue
@@ -241,14 +284,29 @@ func runTaskGroup(
 		// chunk 数据出作用域，GC 可回收
 		processed += len(codes)
 		log.Printf("[回测计划] Chunk %d/%d 完成 | 组内任务数=%d", processed, total, len(states))
+
+		// P2: 内存背压
+		if sysmon.CheckMemoryBackpressure() {
+			time.Sleep(1 * time.Second)
+		}
 	}
 
 	// ── Phase 2：每个 task 独立执行组合推演 ──
 	for j := range states {
+		// P2: 优雅退出检查
+		select {
+		case <-ctx.Done():
+			idx := taskIdxMap[states[j].input.TaskID]
+			outputs[idx] = PlanTaskOutput{TaskID: states[j].input.TaskID, Error: ctx.Err()}
+			onTaskComplete()
+			continue
+		default:
+		}
+
 		t := states[j].input
 		idx := taskIdxMap[t.TaskID]
 
-		result, err := phase2PortfolioSim(t.Config, states[j].signals)
+		result, err := phase2PortfolioSim(ctx, t.Config, states[j].signals, engineCfg)
 		if err != nil {
 			outputs[idx] = PlanTaskOutput{TaskID: t.TaskID, Error: err}
 		} else {

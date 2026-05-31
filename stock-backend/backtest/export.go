@@ -2,9 +2,11 @@ package backtest
 
 import (
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -36,7 +38,7 @@ func ExportCSV(result *BacktestResult, exportsDir string) (string, error) {
 	w := csv.NewWriter(f)
 
 	// Section 1: 交易流水
-	header := []string{"股票代码", "买入日期", "买入价", "卖出日期", "卖出价", "股数", "盈亏金额", "收益率", "持仓天数", "所属策略", "买入原因", "卖出原因"}
+	header := []string{"股票代码", "买入日期", "买入价", "卖出日期", "卖出价", "股数", "盈亏金额", "收益率", "持仓天数", "所属策略", "买入原因", "卖出原因", "信号评分", "分批减仓记录"}
 	if err := w.Write(header); err != nil {
 		return "", err
 	}
@@ -55,6 +57,8 @@ func ExportCSV(result *BacktestResult, exportsDir string) (string, error) {
 			t.Strategy,
 			t.BuyReason,
 			t.SellReason,
+			fmt.Sprintf("%d", t.Score),
+			formatPartialSells(t.PartialSells),
 		}
 		if err := w.Write(row); err != nil {
 			return "", err
@@ -81,6 +85,12 @@ func ExportCSV(result *BacktestResult, exportsDir string) (string, error) {
 		return "", err
 	}
 
+	// 生成 _summary.json 汇总报告
+	summaryPath := strings.TrimSuffix(fullPath, ".csv") + "_summary.json"
+	if summaryJSON, err := json.MarshalIndent(result.Metrics, "", "  "); err == nil {
+		os.WriteFile(summaryPath, summaryJSON, 0644)
+	}
+
 	absPath, _ := filepath.Abs(fullPath)
 	return absPath, nil
 }
@@ -92,4 +102,16 @@ func formatDate(ymd string) string {
 		return ymd
 	}
 	return t.Format("2006-01-02")
+}
+
+// formatPartialSells 将分批减仓记录序列化为紧凑可读字符串。
+func formatPartialSells(events []PartialSellEvent) string {
+	if len(events) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	for _, ps := range events {
+		fmt.Fprintf(&sb, "%s@%.2fx%d(%s);", formatDate(ps.SellDate), ps.SellPrice, ps.SellQty, ps.Reason)
+	}
+	return sb.String()
 }

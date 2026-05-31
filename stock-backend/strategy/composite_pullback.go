@@ -106,7 +106,7 @@ type CompositePullbackAnalyzer struct {
 }
 
 func (c *CompositePullbackAnalyzer) Name() string     { return c.name }
-func (c *CompositePullbackAnalyzer) MarketTag() string { return "left" }
+func (c *CompositePullbackAnalyzer) MarketTag() string { return "right" }
 func (c *CompositePullbackAnalyzer) RequiredData() []string {
 	return []string{"klines", "fundamentals", "moneyflow"}
 }

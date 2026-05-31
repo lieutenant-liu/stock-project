@@ -1,6 +1,7 @@
 package backtest
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"sort"
@@ -10,13 +11,16 @@ import (
 	"stock-backend/strategy"
 	"stock-backend/tushare"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
 // RunV2 执行两阶段解耦回测。
 // Phase 1: 按股票遍历，每只股票仅 4 次 DB 查询，产出理论交易信号。
 // Phase 2: 按日历推演，0 次 DB 查询，纯内存计算逐日精确净值。
-func RunV2(cfg BacktestConfig) (*BacktestResult, error) {
+func RunV2(ctx context.Context, cfg BacktestConfig) (*BacktestResult, error) {
+	sysmon.Init()
 	log.Printf("[回测V2] 启动 | 策略=%s 区间=%s~%s 资金=%.0f", cfg.Strategy, cfg.StartDate, cfg.EndDate, cfg.InitialCapital)
 
 	// ── 参数校验与默认值 ──
@@ -53,15 +57,24 @@ func RunV2(cfg BacktestConfig) (*BacktestResult, error) {
 		cfg.PositionSizePct = 0.20
 	}
 
+	// ── 读取引擎子策略配置 ──
+	engineCfg, err := db.GetEngineConfig()
+	if err != nil {
+		log.Printf("[回测V2] 引擎配置读取失败，使用默认全开: %v", err)
+		engineCfg = db.EngineConfig{EnableRegimeRouter: true, EnableSignalAllocator: true, Enable3DExit: true}
+	}
+	log.Printf("[回测V2] 引擎子策略 | 大盘路由=%v 资金裁决=%v 3D退出=%v",
+		engineCfg.EnableRegimeRouter, engineCfg.EnableSignalAllocator, engineCfg.Enable3DExit)
+
 	// ── Phase 1: Signal Mining ──
 	tPhase1 := time.Now()
-	signals := phase1SignalMining(cfg)
+	signals := phase1SignalMining(ctx, cfg, engineCfg)
 	log.Printf("[回测V2] Phase 1 完成 | 信号=%d 笔 | 耗时 %s", len(signals), time.Since(tPhase1).Round(time.Millisecond))
 	strategy.PbmaProbeReport() // 死因探针：输出 PBMA 各步骤淘汰统计
 
 	// ── Phase 2: Portfolio Simulation ──
 	tPhase2 := time.Now()
-	result, err := phase2PortfolioSim(cfg, signals)
+	result, err := phase2PortfolioSim(ctx, cfg, signals, engineCfg)
 	if err != nil {
 		return nil, err
 	}
@@ -77,6 +90,20 @@ func RunV2(cfg BacktestConfig) (*BacktestResult, error) {
 // MaxSignalsPerTask 单任务信号上限，防止 OOM（Termux 安全阈值）。
 const MaxSignalsPerTask = 100000
 
+// MaxGroupSignals 计算组级信号容量上限。
+// 任务越多，每个任务分到的配额越少，防止多任务聚合导致 OOM。
+func MaxGroupSignals(taskCount int) int {
+	if taskCount <= 1 {
+		return MaxSignalsPerTask
+	}
+	// 组级上限 = 200000，但每个任务至少 20000
+	perTask := MaxSignalsPerTask / taskCount
+	if perTask < 20000 {
+		perTask = 20000
+	}
+	return perTask * taskCount
+}
+
 // ChunkData 一个 chunk 的批量查询结果（用完即弃，控制内存峰值）。
 type ChunkData struct {
 	Codes      []string
@@ -85,9 +112,10 @@ type ChunkData struct {
 	FlowsMap   map[string][]tushare.DailyMoneyFlow
 	LimitsMap  map[string][]tushare.StkLimit
 	CyqPerfMap map[string][]tushare.CyqPerf
+	FinaMap    map[string][]tushare.FinaIndicator
 }
 
-// LoadChunk 从 DB 加载单个 chunk 的全部数据（5条SQL）。
+// LoadChunk 从 DB 加载单个 chunk 的全部数据（6条SQL）。
 func LoadChunk(codes []string, lookbackStart, endDate string) ChunkData {
 	return ChunkData{
 		Codes:      codes,
@@ -96,6 +124,7 @@ func LoadChunk(codes []string, lookbackStart, endDate string) ChunkData {
 		FlowsMap:   db.BatchGetMoneyFlow(codes, lookbackStart, endDate),
 		LimitsMap:  db.BatchGetStkLimit(codes, lookbackStart, endDate),
 		CyqPerfMap: db.BatchGetCyqPerf(codes, lookbackStart, endDate),
+		FinaMap:    db.BatchGetFinaIndicators(codes, lookbackStart, endDate),
 	}
 }
 
@@ -106,6 +135,7 @@ func MineChunkSignals(
 	analyzers []strategy.Analyzer,
 	isBullMarket map[string]bool,
 	isStrongMarket map[string]bool,
+	engineCfg db.EngineConfig,
 ) []TheoreticalTrade {
 	var signals []TheoreticalTrade
 	for _, code := range chunk.Codes {
@@ -123,14 +153,15 @@ func MineChunkSignals(
 			limitMap[l.TradeDate] = l
 		}
 
-		trades := mineStockSignals(code, klines, funds, flows, limitMap, cyqPerfs, cfg, analyzers, isBullMarket, isStrongMarket)
+		trades := mineStockSignals(code, klines, funds, flows, limitMap, cyqPerfs, chunk.FinaMap[code], cfg, analyzers, isBullMarket, isStrongMarket, engineCfg)
 		signals = append(signals, trades...)
 	}
 	return signals
 }
 
-func phase1SignalMining(cfg BacktestConfig) []TheoreticalTrade {
+func phase1SignalMining(ctx context.Context, cfg BacktestConfig, engineCfg db.EngineConfig) []TheoreticalTrade {
 	chunkSize := sysmon.GetChunkSize()
+	maxWorkers := sysmon.GetMaxWorkers()
 	analyzers := SelectAnalyzers(cfg.Strategy)
 	lookbackStart := SubtractDays(cfg.StartDate, 365)
 
@@ -138,31 +169,63 @@ func phase1SignalMining(cfg BacktestConfig) []TheoreticalTrade {
 	indexData := db.GetIndexDailyForBacktest("000001.SH", lookbackStart, cfg.EndDate)
 	isBullMarket := BuildMarketRegimeMap(indexData)
 	isStrongMarket := BuildStrongMarketMap(indexData)
-	log.Printf("[回测V2] 大盘数据 %d 天, 安全日 %d 天, 强势日 %d 天", len(indexData), countTrue(isBullMarket), countTrue(isStrongMarket))
+	log.Printf("[回测V2] 大盘数据 %d 天, 安全日 %d 天, 强势日 %d 天 | Workers=%d", len(indexData), countTrue(isBullMarket), countTrue(isStrongMarket), maxWorkers)
 
-	// 2. 分块批量加载 + 纯内存策略运算
+	// 2. 并发分块加载 + 纯内存策略运算
 	var signals []TheoreticalTrade
+	var mu sync.Mutex // 保护 signals 切片
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, maxWorkers)
 	total := len(cfg.TargetPool)
-	processed := 0
+	var processed int64
 
 	for i := 0; i < total; i += chunkSize {
+		// P2: 优雅退出检查（调度前）
+		select {
+		case <-ctx.Done():
+			log.Printf("[回测V2] 收到取消指令，停止 Phase 1 调度 (已分发 %d/%d)", i, total)
+			wg.Wait()
+			return signals
+		default:
+		}
+
+		// P2: 内存背压（调度前）
+		if sysmon.CheckMemoryBackpressure() {
+			time.Sleep(1 * time.Second)
+		}
+
 		end := i + chunkSize
 		if end > total {
 			end = total
 		}
 		codes := cfg.TargetPool[i:end]
-		chunk := LoadChunk(codes, lookbackStart, cfg.EndDate)
-		chunkSignals := MineChunkSignals(cfg, chunk, analyzers, isBullMarket, isStrongMarket)
-		// P1: 信号上限防 OOM
-		if len(signals)+len(chunkSignals) > MaxSignalsPerTask {
-			log.Printf("[回测V2] 信号数已达上限 %d，截断剩余 chunk", MaxSignalsPerTask)
-			break
-		}
-		signals = append(signals, chunkSignals...)
 
-		processed += len(codes)
-		log.Printf("[回测V2] 信号开采进度 %d/%d | 信号=%d 笔", processed, total, len(signals))
+		wg.Add(1)
+		sem <- struct{}{} // 获取令牌（满时阻塞）
+
+		go func(codes []string) {
+			defer wg.Done()
+			defer func() { <-sem }() // 释放令牌
+
+			chunk := LoadChunk(codes, lookbackStart, cfg.EndDate)
+			chunkSignals := MineChunkSignals(cfg, chunk, analyzers, isBullMarket, isStrongMarket, engineCfg)
+
+			mu.Lock()
+			// P1: 信号上限防 OOM
+			if len(signals)+len(chunkSignals) > MaxSignalsPerTask {
+				log.Printf("[回测V2] 信号数已达上限 %d，丢弃本 chunk 信号", MaxSignalsPerTask)
+				mu.Unlock()
+			} else {
+				signals = append(signals, chunkSignals...)
+				newTotal := len(signals)
+				mu.Unlock()
+				n := int(atomic.AddInt64(&processed, int64(len(codes))))
+				log.Printf("[回测V2] 信号开采进度 %d/%d | 信号=%d 笔", n, total, newTotal)
+			}
+		}(codes)
 	}
+
+	wg.Wait()
 
 	return signals
 }
@@ -178,10 +241,12 @@ func mineStockSignals(
 	flows []tushare.DailyMoneyFlow,
 	limitMap map[string]tushare.StkLimit,
 	cyqPerfs []tushare.CyqPerf,
+	finas []tushare.FinaIndicator,
 	cfg BacktestConfig,
 	analyzers []strategy.Analyzer,
 	isBullMarket map[string]bool,
 	isStrongMarket map[string]bool,
+	engineCfg db.EngineConfig,
 ) []TheoreticalTrade {
 	var trades []TheoreticalTrade
 	var pending *pendingSignal // T+1 挂单
@@ -222,7 +287,7 @@ func mineStockSignals(
 				}
 			}
 
-			buyPrice := today.Open
+			buyPrice := today.Open * (1 + SlippageRate) // 买入滑点
 			targetAlloc := cfg.InitialCapital * cfg.PositionSizePct
 			maxShares := int(targetAlloc / (buyPrice * (1 + cfg.Commission)))
 			shares := (maxShares / 100) * 100
@@ -243,66 +308,125 @@ func mineStockSignals(
 					buyResult: pending.buyResult,
 					meta:      pending.meta,
 					buyATR:    buyATR,
+					peakClose: buyPrice,
+					daysHeld:  0,
+					halfSold:  false,
+					totalQty:  shares,
+					score:     pending.score,
 				}
 			}
 			pending = nil
 		}
 
-		// ── B. 持仓评估：两阶段动态止损 + 策略动态止盈止损 ──
+		// ── B. 持仓评估：3D退出状态机 + 策略动态止盈止损 ──
 		if hold != nil {
 			// 0. T+1 保护约束：买入当天不允许任何卖出评估
 			if i == hold.buyIdx {
 				continue
 			}
 
-			// 更新高水位
+			// 每日持仓递增
+			hold.daysHeld++
+
+			// 更新高水位（两套：highWatermark 用于 Stage B，peakClose 用于 3D 退出）
 			if today.Close > hold.highWatermark {
 				hold.highWatermark = today.Close
 			}
+			if today.Close > hold.peakClose {
+				hold.peakClose = today.Close
+			}
 
-			// B1. Armed 状态最高优先级
+			// B1. Armed 状态最高优先级（跌停出逃）
 			if hold.trailingStopArmed {
 				if today.High > today.Low && today.Vol > 0 {
 					reason := fmt.Sprintf("跌停打开，集合竞价出逃（开盘价 %.2f）", today.Open)
 					trades = append(trades, buildClosedTrade(code, hold, i, today.Open, reason, klines))
 					hold = nil
-					continue // 【核心修复】：必须跳过本日
+					continue
 				}
-				continue // 一字跌停，继续武装，跳过本日
+				continue
 			}
 
-			// 阶段判定：最大浮盈达到 15% 前为阶段A，达到后为阶段B
-			maxGainPct := (hold.highWatermark - hold.buyPrice) / hold.buyPrice * 100
-			if maxGainPct >= 15.0 {
-				hold.stageBActive = true
-			}
-
-			holdingHistory := klines[hold.buyIdx : i+1]
-
-			if hold.stageBActive {
-				// 阶段B：利润锁定期，启用 Max(2.5*ATR, 12%) 追踪止损
-				if strategy.IsTrailingStopTriggered(today, holdingHistory, hold.buyATR, 2.5, 0.12) {
-					if today.High == today.Low || today.Vol == 0 {
+			// B2. 退出逻辑分支：Enable3DExit 开关实现新旧逻辑绝对隔离
+			if engineCfg.Enable3DExit {
+				// ── 新版 3D 退出状态机（唯一退出判定者）──
+				sell, reason, partial := eval3DExit(today, hold, hold.strategy, klines[:i+1], engineCfg.ExitProfile)
+				if sell {
+					// 跌停封死检测：基于前复权价格的真实跌幅判定（避免未复权 DownLimit 跨维度对比）
+					isLimitDown := false
+					if i > 0 {
+						prevClose := klines[i-1].Close
+						if prevClose > 0 {
+							pctChg := (today.Close - prevClose) / prevClose
+							// 跌幅 >= 9.5% 且收盘价等于最低价，认定为实质性跌停无法卖出
+							if pctChg <= -0.095 && today.Close == today.Low {
+								isLimitDown = true
+							}
+							// ST 股窄幅跌停兜底：单日振幅为零且跌幅达到 4.8%
+							if !isLimitDown && pctChg <= -0.048 && today.High == today.Low {
+								isLimitDown = true
+							}
+						}
+					}
+					if isLimitDown {
 						hold.trailingStopArmed = true
-						continue // 跌停锁死，等明天
+						continue
 					}
-					if ok, sellPrice, reason := strategy.CheckTrailingStop(today, holdingHistory, hold.buyATR, 2.5, 0.12); ok {
-						trades = append(trades, buildClosedTrade(code, hold, i, sellPrice, reason, klines))
-						hold = nil
-						continue // 【核心修复】：必须跳过本日
+					if partial {
+						qty := (hold.totalQty / 200) * 100 // 取整到100股一手
+						if qty < 100 {
+							qty = 100
+						}
+						hold.partialSells = append(hold.partialSells, PartialSellEvent{
+							SellDate:  todayDate,
+							SellPrice: today.Close,
+							SellQty:   qty,
+							Reason:    reason,
+						})
+						hold.totalQty -= qty
+						hold.halfSold = true
+						hold.reason = reason
+						continue
 					}
-				}
-			} else {
-				// 阶段A：宽幅护底期，执行 -10% 硬止损
-				if ok, sellPrice, reason := strategy.CheckHardStop(today, hold.buyPrice, 0.10); ok {
-					trades = append(trades, buildClosedTrade(code, hold, i, sellPrice, reason, klines))
+					trades = append(trades, buildClosedTrade(code, hold, i, today.Close, reason, klines))
 					hold = nil
 					continue
 				}
+				// eval3DExit 决定不卖出 → 直接跳到下一天，绝不触碰旧版逻辑
+				continue
 			}
 
-			// B3. 常规策略 EvaluateHold
-			// 执行到这里，hold 绝对不可能为 nil
+			// ── 旧版历史兜底逻辑（Enable3DExit=false 时生效）──
+			// B3. 两阶段止损（Stage A: -10% 硬止损 / Stage B: 追踪止损）
+			holdingHistory := klines[hold.buyIdx : i+1]
+			if !hold.halfSold {
+				maxGainPct := (hold.highWatermark - hold.buyPrice) / hold.buyPrice * 100
+				if maxGainPct >= 15.0 {
+					hold.stageBActive = true
+				}
+				if hold.stageBActive {
+					if strategy.IsTrailingStopTriggered(today, holdingHistory, hold.buyATR, 2.5, 0.12) {
+						if today.High == today.Low || today.Vol == 0 {
+							hold.trailingStopArmed = true
+							continue
+						}
+						if ok, sellPrice, trailReason := strategy.CheckTrailingStop(today, holdingHistory, hold.buyATR, 2.5, 0.12); ok {
+							trades = append(trades, buildClosedTrade(code, hold, i, sellPrice, trailReason, klines))
+							hold = nil
+							continue
+						}
+					}
+				} else {
+					// Stage A：宽幅护底期，执行 -10% 硬止损
+					if ok, sellPrice, reason := strategy.CheckHardStop(today, hold.buyPrice, 0.10); ok {
+						trades = append(trades, buildClosedTrade(code, hold, i, sellPrice, reason, klines))
+						hold = nil
+						continue
+					}
+				}
+			}
+
+			// B4. 常规策略 EvaluateHold（旧版模式下的策略级退出）
 			fullHistory := klines[:i+1]
 			for _, analyzer := range analyzers {
 				if analyzer.Name() == hold.strategy {
@@ -318,11 +442,11 @@ func mineStockSignals(
 						trades = append(trades, buildClosedTrade(code, hold, i, eval.Price, eval.Reason, klines))
 						hold = nil
 					}
-					break // 退出 analyzers 循环
+					break
 				}
 			}
 
-			// 【防同日再入隔离】如果在 B3 卖出了，hold 变为空，必须跳过本日的 Section C (买入扫描)
+			// 【防同日再入隔离】
 			if hold == nil {
 				continue
 			}
@@ -336,14 +460,14 @@ func mineStockSignals(
 			}
 
 			// 构建策略上下文
-			ctx := BuildStockContext(code, klines, funds, flows, fundMap, flowMap, cyqMap, i, todayDate)
+			ctx := BuildStockContext(code, klines, funds, flows, fundMap, flowMap, cyqMap, finas, i, todayDate)
 			if ctx == nil || len(ctx.KLines) < 30 { // P1: 降低门槛，各策略内部自行检查所需最小长度
 				continue
 			}
 
 			// 弱势环境下仅允许左侧策略（缩量回踩/深海动量），屏蔽右侧突破策略
 			eligible := analyzers
-			if !isStrongMarket[todayDate] {
+			if engineCfg.EnableRegimeRouter && !isStrongMarket[todayDate] {
 				eligible = make([]strategy.Analyzer, 0, len(analyzers))
 				for _, a := range analyzers {
 					if a.MarketTag() == "left" {
@@ -365,6 +489,7 @@ func mineStockSignals(
 						reason:     result.Message,
 						buyResult:  result,
 						meta:       buildStrategyMeta(analyzer.Name(), result, klines, i),
+						score:      signalScore(analyzer.Name(), klines, i),
 					}
 					break
 				}
@@ -386,6 +511,7 @@ func mineStockSignals(
 
 // buildClosedTrade 构建一笔已闭环的完整交易。
 func buildClosedTrade(code string, hold *holdState, sellIdx int, sellPrice float64, sellReason string, klines []tushare.DailyKLine) TheoreticalTrade {
+	sellPrice *= (1 - SlippageRate) // 卖出滑点
 	holdingPrices := make(map[string]float64, sellIdx-hold.buyIdx+1)
 	for j := hold.buyIdx; j <= sellIdx; j++ {
 		holdingPrices[klines[j].TradeDate] = klines[j].Close
@@ -400,6 +526,8 @@ func buildClosedTrade(code string, hold *holdState, sellIdx int, sellPrice float
 		BuyReason:     hold.reason,
 		SellReason:    sellReason,
 		HoldingPrices: holdingPrices,
+		Score:         hold.score,
+		PartialSells:  hold.partialSells,
 	}
 }
 
@@ -443,6 +571,7 @@ func BuildStockContext(
 	fundMap map[string]tushare.DailyFundamental,
 	flowMap map[string]tushare.DailyMoneyFlow,
 	cyqMap map[string]tushare.CyqPerf,
+	finas []tushare.FinaIndicator,
 	currentIdx int,
 	currentDate string,
 ) *strategy.SecurityContext {
@@ -484,6 +613,15 @@ func BuildStockContext(
 		cyqPerf = &c
 	}
 
+	// 最新季报财务指标（反向线性扫描，兼容周末公告日期）
+	var latestFina *tushare.FinaIndicator
+	for j := len(finas) - 1; j >= 0; j-- {
+		if finas[j].AnnDate <= currentDate {
+			latestFina = &finas[j]
+			break
+		}
+	}
+
 	// PE 分位数
 	pePercentile := CalcPEPercentileFromFunds(funds, currentDate)
 
@@ -494,6 +632,7 @@ func BuildStockContext(
 		MoneyFlows:   flowsSlice,
 		PEPercentile: pePercentile,
 		CyqPerf:      cyqPerf,
+		LatestFina:   latestFina,
 	}
 }
 
@@ -542,7 +681,7 @@ type activePosition struct {
 	buyCost float64
 }
 
-func phase2PortfolioSim(cfg BacktestConfig, signals []TheoreticalTrade) (*BacktestResult, error) {
+func phase2PortfolioSim(ctx context.Context, cfg BacktestConfig, signals []TheoreticalTrade, engineCfg db.EngineConfig) (*BacktestResult, error) {
 	// 1. 获取交易日历
 	tradingDays := db.GetTradingDays(cfg.StartDate, cfg.EndDate)
 	if len(tradingDays) == 0 {
@@ -560,45 +699,111 @@ func phase2PortfolioSim(cfg BacktestConfig, signals []TheoreticalTrade) (*Backte
 	cash := cfg.InitialCapital
 	activePositions := make(map[string]*activePosition)
 	var tradeLog []TradeRecord
-	var equityCurve []EquityPoint
+	var dailyEquity []DailyEquity
 	peakValue := cfg.InitialCapital
 	maxDrawdown := 0.0
 
 	// 4. 按天循环日历（0次DB查询）
-	for _, today := range tradingDays {
-		// A. 卖出处理
+	for dayIdx, today := range tradingDays {
+		// P2: 优雅退出 + 内存背压（每10天检查一次）
+		if dayIdx%10 == 0 {
+			select {
+			case <-ctx.Done():
+				log.Printf("[回测V2] Phase 2 收到取消指令，终止于 %s", today)
+				return nil, ctx.Err()
+			default:
+			}
+			if sysmon.CheckMemoryBackpressure() {
+				time.Sleep(1 * time.Second)
+			}
+		}
+
+		// A. 卖出处理（含分批减仓）
 		for code, ap := range activePositions {
+			// A1. 检查分批减仓事件（PartialSells）
+			if len(ap.trade.PartialSells) > 0 && ap.trade.SellDate != today {
+				for _, ps := range ap.trade.PartialSells {
+					if ps.SellDate == today {
+						sellQty := ps.SellQty
+						if sellQty > ap.shares {
+							sellQty = ap.shares
+						}
+						sellAmount := float64(sellQty) * ps.SellPrice * (1 - cfg.Commission)
+						pnl := sellAmount - float64(sellQty)*ap.trade.BuyPrice*(1+cfg.Commission)
+						tradeLog = append(tradeLog, TradeRecord{
+							TSCode:     code,
+							BuyDate:    ap.trade.BuyDate,
+							BuyPrice:   ap.trade.BuyPrice,
+							SellDate:   today,
+							SellPrice:  ps.SellPrice,
+							Shares:     sellQty,
+							PnL:        pnl,
+							ReturnPct:  (ps.SellPrice - ap.trade.BuyPrice) / ap.trade.BuyPrice * 100,
+							HoldDays:   countDaysBetween(tradingDays, ap.trade.BuyDate, today),
+							BuyReason:  ap.trade.BuyReason,
+							SellReason: ps.Reason,
+							Strategy:   ap.trade.Strategy,
+							Score:      ap.trade.Score,
+						})
+						cash += sellAmount
+						ap.shares -= sellQty
+						ap.buyCost -= float64(sellQty) * ap.trade.BuyPrice * (1 + cfg.Commission)
+					}
+				}
+			}
+
+			// A2. 最终清仓（到达 ExitDate）
 			if ap.trade.SellDate == today {
 				sellAmount := float64(ap.shares) * ap.trade.SellPrice * (1 - cfg.Commission)
 				pnl := sellAmount - ap.buyCost
 				tradeLog = append(tradeLog, TradeRecord{
-					TSCode:     code,
-					BuyDate:    ap.trade.BuyDate,
-					BuyPrice:   ap.trade.BuyPrice,
-					SellDate:   today,
-					SellPrice:  ap.trade.SellPrice,
-					Shares:     ap.shares,
-					PnL:        pnl,
-					ReturnPct:  (ap.trade.SellPrice - ap.trade.BuyPrice) / ap.trade.BuyPrice * 100,
-					HoldDays:   countDaysBetween(tradingDays, ap.trade.BuyDate, today),
-					BuyReason:  ap.trade.BuyReason,
-					SellReason: ap.trade.SellReason,
-					Strategy:   ap.trade.Strategy,
+					TSCode:       code,
+					BuyDate:      ap.trade.BuyDate,
+					BuyPrice:     ap.trade.BuyPrice,
+					SellDate:     today,
+					SellPrice:    ap.trade.SellPrice,
+					Shares:       ap.shares,
+					PnL:          pnl,
+					ReturnPct:    (ap.trade.SellPrice - ap.trade.BuyPrice) / ap.trade.BuyPrice * 100,
+					HoldDays:     countDaysBetween(tradingDays, ap.trade.BuyDate, today),
+					BuyReason:    ap.trade.BuyReason,
+					SellReason:   ap.trade.SellReason,
+					Strategy:     ap.trade.Strategy,
+					Score:        ap.trade.Score,
+					PartialSells: ap.trade.PartialSells,
 				})
 				cash += sellAmount
 				delete(activePositions, code)
 			}
 		}
 
-		// B. 买入处理
-		for _, signal := range signalsByDate[today] {
+		// B. 计算当前总资产（用于动态头寸 + 逐日盯市）
+		holdingValue := 0.0
+		for _, ap := range activePositions {
+			if closePrice, ok := ap.trade.HoldingPrices[today]; ok {
+				holdingValue += float64(ap.shares) * closePrice
+			} else {
+				holdingValue += ap.buyCost // fallback
+			}
+		}
+		totalEquity := cash + holdingValue
+
+		// C. 买入处理（动态头寸调度 + 按 score 降序优先占用资金）
+		todaySignals := signalsByDate[today]
+		if engineCfg.EnableSignalAllocator {
+			sort.SliceStable(todaySignals, func(i, j int) bool {
+				return todaySignals[i].Score > todaySignals[j].Score
+			})
+		}
+		for _, signal := range todaySignals {
 			if _, held := activePositions[signal.Code]; held {
 				continue
 			}
 
-			targetAlloc := cfg.InitialCapital * cfg.PositionSizePct
-			maxShares := int(targetAlloc / (signal.BuyPrice * (1 + cfg.Commission)))
-			shares := (maxShares / 100) * 100
+			shares := CalculatePositionShares(
+				totalEquity, cash, signal.BuyPrice, cfg.Commission,
+				signal.Strategy, signal.Score, cfg.PositionSizePct,
+			)
 			if shares < 100 {
 				continue
 			}
@@ -616,17 +821,9 @@ func phase2PortfolioSim(cfg BacktestConfig, signals []TheoreticalTrade) (*Backte
 			}
 		}
 
-		// C. 逐日盯市 (Daily MTM)
-		holdingValue := 0.0
-		for _, ap := range activePositions {
-			if closePrice, ok := ap.trade.HoldingPrices[today]; ok {
-				holdingValue += float64(ap.shares) * closePrice
-			} else {
-				holdingValue += ap.buyCost // fallback
-			}
-		}
+		// D. 逐日盯市 (Daily MTM)
 		totalValue := cash + holdingValue
-		equityCurve = append(equityCurve, EquityPoint{Date: today, Value: totalValue})
+		dailyEquity = append(dailyEquity, DailyEquity{Date: today, Equity: totalValue, Cash: cash})
 
 		if totalValue > peakValue {
 			peakValue = totalValue
@@ -658,6 +855,16 @@ func phase2PortfolioSim(cfg BacktestConfig, signals []TheoreticalTrade) (*Backte
 		winRate = float64(winCount) / float64(len(tradeLog)) * 100
 	}
 
+	// 构建 equityCurve（向后兼容）
+	equityCurve := make([]EquityPoint, len(dailyEquity))
+	for i, de := range dailyEquity {
+		equityCurve[i] = EquityPoint{Date: de.Date, Value: de.Equity}
+	}
+
+	// 计算专业汇总指标并打印报告
+	summary := CalcSummary(cfg, finalAssets, tradeLog, dailyEquity)
+	PrintSummaryReport(summary)
+
 	log.Printf("[回测V2] 全部完成 | 收益率=%.2f%% 胜率=%.1f%% 回撤=%.2f%% 交易=%d笔",
 		totalReturn, winRate, maxDrawdown, len(tradeLog))
 
@@ -674,6 +881,7 @@ func phase2PortfolioSim(cfg BacktestConfig, signals []TheoreticalTrade) (*Backte
 		TradeLog:    tradeLog,
 		EquityCurve: equityCurve,
 		Summary:     buildPortfolioSummary(cfg, finalAssets, totalReturn, winRate, maxDrawdown, len(tradeLog), len(cfg.TargetPool)),
+		Metrics:     summary,
 	}, nil
 }
 

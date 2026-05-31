@@ -390,6 +390,23 @@ func InitDB() {
 	);
 	CREATE INDEX IF NOT EXISTS idx_plan_tasks_plan_id ON backtest_plan_tasks(plan_id);`
 
+	createStrategyRegistryTable := `
+	CREATE TABLE IF NOT EXISTS strategy_registry (
+		id          TEXT PRIMARY KEY,
+		name        TEXT NOT NULL,
+		category    TEXT NOT NULL DEFAULT '',
+		description TEXT NOT NULL DEFAULT '',
+		principle   TEXT NOT NULL DEFAULT '',
+		win_rate    REAL NOT NULL DEFAULT 0,
+		is_enabled  INTEGER NOT NULL DEFAULT 1
+	);`
+
+	createEngineConfigTable := `
+	CREATE TABLE IF NOT EXISTS engine_config (
+		key   TEXT PRIMARY KEY,
+		value INTEGER NOT NULL DEFAULT 1
+	);`
+
 	// 清理旧表：销毁过时的打卡本！
 	DB.Exec(`DROP TABLE IF EXISTS sync_history;`)
 	DB.Exec(`DROP TABLE IF EXISTS sync_history_fund;`)
@@ -405,6 +422,7 @@ func InitDB() {
 		createEmailNotifyConfigTable, createEmailRecipientsTable,
 		createCyqPerfTable, createStkFactorProTable, createSystemConfigTable,
 		createBacktestJobsTable, createBacktestPlansTable, createSignalLabJobsTable, createBacktestPlanTasksTable,
+		createStrategyRegistryTable, createEngineConfigTable,
 	}
 	for _, sqlStr := range tables {
 		if _, err = DB.Exec(sqlStr); err != nil {
@@ -419,12 +437,18 @@ func InitDB() {
 	DB.SetMaxOpenConns(4) // 允许 4 个并发连接 (1个给后台静默写入，3个给前端查询)
 	DB.SetMaxIdleConns(2) // 保持适度的长连接池，防止 Termux 频繁创建/销毁套接字资源耗尽
 
-	// Termux 下收紧连接池：与 MaxWorkers=2 对齐，消除 DB 锁排队
+	// Termux 下连接池与 MaxWorkers=4 对齐，消除 DB 锁排队
 	if sysmon.GetEnv().IsTermux {
-		DB.SetMaxOpenConns(2)
-		DB.SetMaxIdleConns(2)
-		DB.Exec("PRAGMA cache_size = -10000;") // 10MB 页缓存，消灭磁盘 Spill 开销
+		DB.SetMaxOpenConns(4) // 4 个 Worker 各持独立连接，零等待
+		DB.SetMaxIdleConns(4)
+		DB.Exec("PRAGMA cache_size = -20000;") // 20MB 页缓存，4 路并发联合查询无磁盘溢写
 	}
+
+	// 初始化策略注册表
+	InitStrategyRegistry()
+
+	// 初始化引擎子策略配置
+	InitEngineConfig()
 
 	fmt.Println("[数据清理] 旧时代打卡本已被清除，进入精确对账时代！")
 	fmt.Println("🗄️ [数据中心] 究极形态：V2.0 六大核心数据表部署完毕！")

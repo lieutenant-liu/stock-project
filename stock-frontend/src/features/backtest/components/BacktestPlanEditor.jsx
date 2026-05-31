@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { getDefaultDateRange } from '../../../utils/dateRange'
+import api from '../../../api/client'
 
 const defaultRange = getDefaultDateRange()
 
@@ -12,6 +13,20 @@ const emptyTask = () => ({
   position_size_pct: 0.20,
 })
 
+// 生成数组的所有非空子集（幂集去掉空集）
+function nonEmptySubsets(arr) {
+  const result = []
+  const n = arr.length
+  for (let mask = 1; mask < (1 << n); mask++) {
+    const subset = []
+    for (let i = 0; i < n; i++) {
+      if (mask & (1 << i)) subset.push(arr[i])
+    }
+    result.push(subset)
+  }
+  return result
+}
+
 const inputStyle = {
   backgroundColor: '#111',
   color: '#fff',
@@ -22,7 +37,8 @@ const inputStyle = {
   fontSize: '0.85rem',
 }
 
-const strategies = [
+// 策略列表从后端动态加载
+const defaultStrategies = [
   { value: 'ALL', label: '全部策略' },
   { value: 'MACB', label: 'MACB 均线收敛突破' },
   { value: 'CBBM', label: 'CBBM 中枢强势突破' },
@@ -37,23 +53,36 @@ const strategies = [
   { value: 'CBBM-EXP-P-EXP', label: 'CBBM-EXP-P-EXP 高质箱体回踩' },
 ]
 
-const strategyOptions = strategies.filter(s => s.value !== 'ALL')
-
-// 解析策略字符串为数组
-const parseStrategies = (s) => {
-  if (!s || s === 'ALL') return strategyOptions.map(o => o.value)
-  return s.split(',').map(x => x.trim()).filter(Boolean)
-}
-
-// 数组转回策略字符串
-const joinStrategies = (arr) => {
-  if (arr.length === strategyOptions.length || arr.length === 0) return 'ALL'
-  return arr.join(',')
-}
-
 function BacktestPlanEditor({ onSubmit, loading }) {
   const [name, setName] = useState('')
   const [tasks, setTasks] = useState([emptyTask()])
+  const [strategies, setStrategies] = useState(defaultStrategies)
+
+  useEffect(() => {
+    api.listActiveStrategies().then(res => {
+      if (res.code === 200 && res.strategies) {
+        const mapped = [
+          { value: 'ALL', label: '全部策略' },
+          ...res.strategies.map(s => ({
+            value: s.id,
+            label: `${s.name} (${s.category}) | 胜率: ${s.win_rate}%`,
+          })),
+        ]
+        setStrategies(mapped)
+      }
+    }).catch(() => {})
+  }, [])
+
+  const strategyOptions = strategies.filter(s => s.value !== 'ALL')
+
+  const parseStrategies = (s) => {
+    if (!s || s === 'ALL') return strategyOptions.map(o => o.value)
+    return s.split(',').map(x => x.trim()).filter(Boolean)
+  }
+  const joinStrategies = (arr) => {
+    if (arr.length === strategyOptions.length || arr.length === 0) return 'ALL'
+    return arr.join(',')
+  }
 
   const updateTask = (idx, key, value) => {
     setTasks(prev => prev.map((t, i) => i === idx ? { ...t, [key]: value } : t))
@@ -74,18 +103,19 @@ function BacktestPlanEditor({ onSubmit, loading }) {
   }
 
   // 批量生成：多策略 x 多日期区间
-  const [batchStrategies, setBatchStrategies] = useState(['MACB', 'PBMA'])
+  const [batchStrategies, setBatchStrategies] = useState([])
   const [batchDates, setBatchDates] = useState([
     { start: defaultRange.start, end: defaultRange.end },
   ])
 
   const generateBatch = () => {
+    const subsets = nonEmptySubsets(batchStrategies)
     const newTasks = []
-    for (const s of batchStrategies) {
+    for (const subset of subsets) {
       for (const d of batchDates) {
         newTasks.push({
           ...emptyTask(),
-          strategy: s,
+          strategy: joinStrategies(subset),
           start_date: d.start,
           end_date: d.end,
         })
@@ -146,7 +176,7 @@ function BacktestPlanEditor({ onSubmit, loading }) {
       {/* 批量生成 */}
       <details style={{ marginBottom: '14px', color: '#aaa', fontSize: '0.85rem' }}>
         <summary style={{ cursor: 'pointer', marginBottom: '8px', color: '#5470c6' }}>
-          快速批量生成（策略 x 日期组合）
+          快速批量生成（策略子集 x 日期组合）
         </summary>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '10px', backgroundColor: '#15151f', borderRadius: '6px' }}>
           <div>
@@ -181,7 +211,7 @@ function BacktestPlanEditor({ onSubmit, loading }) {
             onClick={generateBatch}
             style={{ backgroundColor: '#5470c6', border: 'none', color: '#fff', padding: '6px 16px', borderRadius: '6px', cursor: 'pointer', fontSize: '0.85rem', alignSelf: 'flex-start' }}
           >
-            生成组合 ({batchStrategies.length * batchDates.length} 个任务)
+            生成组合 ({((1 << batchStrategies.length) - 1) * batchDates.length} 个任务)
           </button>
         </div>
       </details>
