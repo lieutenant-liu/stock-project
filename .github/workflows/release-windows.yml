@@ -9,8 +9,45 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  # ── Job 1: 构建前端（仅一次）──
+  build-frontend:
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build Frontend
+        working-directory: stock-frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Upload frontend dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: stock-frontend/dist/
+
+  # ── Job 2: 交叉编译（Matrix: Windows + Android ARM）──
+  build-binary:
+    needs: build-frontend
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: windows
+            goarch: amd64
+            output: stock-terminal.exe
+          - goos: linux
+            goarch: arm
+            goarm: '7'
+            output: stock-terminal-linux-armv7
+          - goos: linux
+            goarch: arm64
+            output: stock-terminal-linux-arm64
     steps:
       - uses: actions/checkout@v4
 
@@ -18,31 +55,44 @@ jobs:
         with:
           go-version: '1.25'
 
-      - uses: actions/setup-node@v4
+      - name: Download frontend dist
+        uses: actions/download-artifact@v4
         with:
-          node-version: '20'
+          name: frontend-dist
+          path: frontend-dist/
 
-      # 构建前端
-      - name: Build Frontend
-        working-directory: stock-frontend
-        run: |
-          npm ci
-          npm run build
-          cp -r dist/* ../stock-backend/web/
+      - name: Copy frontend to web/
+        run: cp -r frontend-dist/* stock-backend/web/
 
-      # 交叉编译 Windows amd64
-      - name: Build Go Binary (Windows)
+      - name: Build Go Binary
         working-directory: stock-backend
         env:
-          GOOS: windows
-          GOARCH: amd64
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
           CGO_ENABLED: '0'
-        run: |
-          go build -ldflags="-s -w" -o stock-terminal.exe .
+        run: go build -ldflags="-s -w" -o ${{ matrix.output }} .
 
-      # 创建 GitHub Release
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.output }}
+          path: stock-backend/${{ matrix.output }}
+
+  # ── Job 3: 创建 GitHub Release ──
+  release:
+    needs: build-binary
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: binary-*
+          path: artifacts/
+          merge-multiple: true
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: stock-backend/stock-terminal.exe
+          files: artifacts/*
           generate_release_notes: true
