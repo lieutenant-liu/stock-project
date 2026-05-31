@@ -137,25 +137,29 @@ jobs:
       - name: Place binary in Android assets
         run: cp stock-backend/stock-terminal stock-android/app/src/main/assets/stock-terminal
 
-      - name: Build APK
-        working-directory: stock-android
-        run: |
-          chmod +x gradlew
-          ./gradlew assembleRelease
-
-      - name: Sign APK with debug key
+      # Gradle 签名：signingConfigs 读取环境变量，自动完成 V2 签名 + zipalign
+      - name: Generate debug keystore
         run: |
           keytool -genkeypair -v -keystore /tmp/debug.keystore \
             -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
             -storepass android -keypass android \
-            -dname "CN=Debug, OU=Debug, O=Debug, L=Debug, S=Debug, C=US"
+            -dname "CN=StockTerminal, OU=Dev, O=Stock, L=CN, S=CN, C=CN"
 
-          APK_IN=$(find stock-android/app/build/outputs/apk/release -name "*.apk" | head -1)
-          jarsigner -verbose -sigalg SHA256withRSA -digestalg SHA-256 \
-            -keystore /tmp/debug.keystore -storepass android -keypass android \
-            "$APK_IN" androiddebugkey
+      - name: Build APK
+        working-directory: stock-android
+        env:
+          KEYSTORE_FILE: /tmp/debug.keystore
+          KEYSTORE_PASS: android
+          KEY_ALIAS: androiddebugkey
+          KEY_PASS: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease
 
-          ${ANDROID_HOME}/build-tools/34.0.0/zipalign -v 4 "$APK_IN" "${{ matrix.output }}"
+      - name: Copy APK for release
+        run: |
+          APK=$(find stock-android/app/build/outputs/apk/release -name "*.apk" | head -1)
+          cp "$APK" "${{ matrix.output }}"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
