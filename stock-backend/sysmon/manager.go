@@ -1,18 +1,46 @@
 package sysmon
 
+// ============================================================
+// sysmon/manager.go - 系统资源监控
+// ============================================================
+// 这个文件负责监控系统资源（内存、CPU），并根据硬件环境自动调整参数。
+//
+// 【为什么需要这个？】
+// 项目需要在不同设备上运行：
+// - 手机（Termux）：内存有限，需要严格限制
+// - 普通 PC：标准配置
+// - 高配服务器：可以充分利用资源
+// 系统会自动检测环境，选择合适的配置。
+//
+// 【Go 语言知识点】
+// - runtime.MemStats: 内存统计信息
+// - runtime.NumCPU(): 获取 CPU 核心数
+// - debug.SetGCPercent(): 设置 GC 激进度
+// - sync.Once: 保证函数只执行一次
+// - /proc/meminfo: Linux 内存信息文件
+// ============================================================
+
 import (
-	"fmt"
-	"log"
-	"os"
-	"runtime"
-	"runtime/debug"
-	"stock-backend/logger"
-	"strings"
-	"sync"
-	"time"
+	"fmt"      // 格式化输出
+	"log"      // 日志
+	"os"       // 文件操作
+	"runtime"  // 运行时信息
+	"runtime/debug" // GC 调试
+	"stock-backend/logger" // 项目日志
+	"strings"  // 字符串处理
+	"sync"     // 同步原语
+	"time"     // 时间处理
 )
 
+// ------------------------------------------------------------
+// 资源档位定义
+// ------------------------------------------------------------
+
 // Tier 资源档位枚举。
+// 根据设备内存大小分为三个档位：
+// - TierMobile: 手机/低配设备（<4GB 内存）
+// - TierMid: 普通 PC（4-16GB 内存）
+// - TierHigh: 高配服务器（>16GB 内存）
 type Tier int
 
 const (
@@ -21,6 +49,7 @@ const (
 	TierHigh               // >16GB：高配服务器
 )
 
+// String 返回档位的可读名称。
 func (t Tier) String() string {
 	switch t {
 	case TierMobile:
@@ -35,34 +64,48 @@ func (t Tier) String() string {
 }
 
 // ResourceConfig 自适应资源调度参数。
+// 不同档位使用不同的参数，平衡性能和稳定性。
 type ResourceConfig struct {
-	ChunkSize  int
-	MaxWorkers int
-	GCPercent  int     // GOGC 值
-	MemHighPct float64 // 触发 GC 的内存占比阈值
-	MemCritPct float64 // 触发 FreeOSMemory 的内存占比阈值
+	ChunkSize  int     // 数据分块大小（每批加载多少只股票）
+	MaxWorkers int     // 最大并发 worker 数
+	GCPercent  int     // GOGC 值（GC 触发阈值）
+	MemHighPct float64 // 触发 GC 的内存占比阈值（%）
+	MemCritPct float64 // 触发 FreeOSMemory 的内存占比阈值（%）
 }
 
 // EnvInfo 运行环境信息。
 type EnvInfo struct {
-	IsTermux     bool
-	IsLinux      bool
-	TotalMemMB   int64
-	DetectedTier Tier
+	IsTermux     bool   // 是否在 Termux（Android）环境
+	IsLinux      bool   // 是否在 Linux 环境
+	TotalMemMB   int64  // 物理内存总量（MB）
+	DetectedTier Tier   // 检测到的资源档位
 }
 
+// 全局变量（sync.Once 保证只初始化一次）
 var (
 	once   sync.Once
-	env    EnvInfo
-	config ResourceConfig
+	env    EnvInfo         // 环境信息
+	config ResourceConfig  // 资源配置
 )
 
+// ------------------------------------------------------------
+// 初始化
+// ------------------------------------------------------------
+
 // Init 初始化资源管理器（sync.Once 保证只执行一次）。
+// 【Go 语言知识点：sync.Once】
+// sync.Once 保证传入的函数只执行一次，即使被多个 goroutine 同时调用。
+// 常用于单例模式和初始化操作。
 func Init() {
 	once.Do(func() {
+		// 检测运行环境
 		env = detectEnvironment()
+		// 根据环境选择配置
 		config = tierConfig(env.DetectedTier)
+		// 应用 GC 配置
 		applyGOGC(config.GCPercent)
+
+		// 输出环境信息
 		log.Printf("[SYSMON] 环境=%s | 内存=%dMB | 档位=%s | Chunk=%d | Workers=%d | GOGC=%d",
 			envLabel(env), env.TotalMemMB, env.DetectedTier,
 			config.ChunkSize, config.MaxWorkers, config.GCPercent)
@@ -73,21 +116,33 @@ func Init() {
 }
 
 // startHeartbeat 定期记录内存快照，作为进程死亡前的"心电图"。
+// 【用途】
+// 如果程序崩溃，可以通过最后的心跳日志判断是内存溢出还是其他原因。
 func startHeartbeat(env EnvInfo) {
-	interval := 1 * time.Second
+	interval := 1 * time.Second // 默认每秒记录一次
 	if env.IsTermux {
 		interval = 5 * time.Second // Termux 下降低 I/O 压力
 	}
+
+	// 创建定时器
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+
+	// 定时记录内存快照
 	for range ticker.C {
 		var m runtime.MemStats
-		runtime.ReadMemStats(&m)
+		runtime.ReadMemStats(&m) // 读取内存统计
+
+		// 记录到日志
 		logger.Info("[HEARTBEAT] Alloc: %dMB, Sys: %dMB, NumGC: %d, Goroutines: %d",
-			m.HeapAlloc/1024/1024, m.Sys/1024/1024, m.NumGC, runtime.NumGoroutine())
+			m.HeapAlloc/1024/1024, // 堆内存分配量（MB）
+			m.Sys/1024/1024,       // 系统内存总量（MB）
+			m.NumGC,               // GC 次数
+			runtime.NumGoroutine()) // goroutine 数量
 	}
 }
 
+// envLabel 返回环境标签。
 func envLabel(e EnvInfo) string {
 	if e.IsTermux {
 		return "Termux"
@@ -98,8 +153,16 @@ func envLabel(e EnvInfo) string {
 	return "Unknown"
 }
 
+// ------------------------------------------------------------
+// 环境检测
+// ------------------------------------------------------------
+
 // detectEnvironment 嗅探宿主环境。
-// PRoot 会抹除 Termux 环境变量，因此额外通过 /proc/version 内核版本字符串穿透伪装。
+// 【检测策略】
+// 1. 检查环境变量（PREFIX, TERMUX_VERSION）
+// 2. 检查 /proc/version 内核版本字符串（PRoot 穿透）
+// 3. 检查 Android 特有文件（/system/build.prop）
+// 4. 开发者强制后门（FORCE_MOBILE=1）
 func detectEnvironment() EnvInfo {
 	info := EnvInfo{
 		IsLinux:    true, // 当前目标平台
@@ -164,16 +227,22 @@ func detectEnvironment() EnvInfo {
 }
 
 // readMemTotalMB 从 /proc/meminfo 解析物理内存总量（MB）。
+// 【Linux 知识】
+// /proc/meminfo 是 Linux 虚拟文件，包含内存使用信息。
+// 格式示例：MemTotal:        8167848 kB
 func readMemTotalMB(path string) (int64, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return 0, err
 	}
+
+	// 逐行查找 "MemTotal:"
 	for _, line := range strings.Split(string(data), "\n") {
 		if strings.HasPrefix(line, "MemTotal:") {
 			var kb int64
+			// 解析数值（单位 kB）
 			if _, err := fmt.Sscanf(line, "MemTotal: %d kB", &kb); err == nil {
-				return kb / 1024, nil
+				return kb / 1024, nil // 转换为 MB
 			}
 		}
 	}
@@ -183,14 +252,18 @@ func readMemTotalMB(path string) (int64, error) {
 // classifyTier 根据物理内存大小分类档位。
 func classifyTier(memMB int64) Tier {
 	switch {
-	case memMB <= 3*1024:
+	case memMB <= 3*1024: // <= 3GB
 		return TierMobile
-	case memMB <= 16*1024:
+	case memMB <= 16*1024: // <= 16GB
 		return TierMid
-	default:
+	default: // > 16GB
 		return TierHigh
 	}
 }
+
+// ------------------------------------------------------------
+// 配置与查询
+// ------------------------------------------------------------
 
 // tierConfig 根据档位返回资源配置。
 func tierConfig(tier Tier) ResourceConfig {
@@ -206,7 +279,7 @@ func tierConfig(tier Tier) ResourceConfig {
 	case TierHigh:
 		return ResourceConfig{
 			ChunkSize:  500,
-			MaxWorkers: runtime.NumCPU() * 2,
+			MaxWorkers: runtime.NumCPU() * 2, // 充分利用 CPU
 			GCPercent:  85,
 			MemHighPct: 85,
 			MemCritPct: 92,
@@ -223,13 +296,18 @@ func tierConfig(tier Tier) ResourceConfig {
 }
 
 // applyGOGC 设置 Go GC 激进度。
+// 【Go 语言知识点：GOGC】
+// GOGC 控制 GC 触发频率：
+// - GOGC=100（默认）：堆内存增长 100% 时触发 GC
+// - GOGC=50：堆内存增长 50% 时触发 GC（更频繁）
+// - GOGC=200：堆内存增长 200% 时触发 GC（更少频率）
 func applyGOGC(pct int) {
 	debug.SetGCPercent(pct)
 }
 
 // GetChunkSize 返回自适应 chunk 大小。
 func GetChunkSize() int {
-	Init()
+	Init() // 确保已初始化
 	return config.ChunkSize
 }
 
@@ -251,26 +329,37 @@ func GetEnv() EnvInfo {
 	return env
 }
 
+// ------------------------------------------------------------
+// 内存泄压
+// ------------------------------------------------------------
+
 // CheckMemoryBackpressure 检查内存水位，超过阈值时被动等待自然 GC。
 // 返回 true 表示触发了泄压，调用方应额外 sleep 等待回收。
-// 注意：绝不调用 runtime.GC() 或 debug.FreeOSMemory()，PRoot 下会引发 madvise 风暴导致系统重启。
+//
+// 【重要注意事项】
+// 绝不调用 runtime.GC() 或 debug.FreeOSMemory()！
+// 在 PRoot 环境下，这些操作会引发 madvise 风暴，导致系统重启。
+// 只能被动等待 Go 运行时自然触发 GC。
 func CheckMemoryBackpressure() bool {
 	Init()
 
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 
+	// 计算物理内存总量
 	totalBytes := uint64(env.TotalMemMB) * 1024 * 1024
 	if totalBytes == 0 {
 		return false
 	}
 
+	// 计算堆内存占比
 	heapPct := float64(m.HeapAlloc) / float64(totalBytes) * 100
 
+	// 超过阈值，触发泄压
 	if heapPct >= config.MemHighPct {
 		log.Printf("[SYSMON] 内存水位告警 %.1f%% (HeapAlloc=%dMB / Total=%dMB) → 等待自然 GC",
 			heapPct, m.HeapAlloc/1024/1024, env.TotalMemMB)
-		time.Sleep(1 * time.Second)
+		time.Sleep(1 * time.Second) // 等待 1 秒，让 GC 有机会运行
 		return true
 	}
 
