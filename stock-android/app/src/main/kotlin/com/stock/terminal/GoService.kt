@@ -43,7 +43,8 @@ class GoService(private val context: Context) {
                 Log.i(TAG, "Binary: ${binary.absolutePath}, size=${binary.length()}, exec=${binary.canExecute()}")
                 Log.i(TAG, "WorkDir: ${filesDir.absolutePath}, exists=${filesDir.exists()}, writable=${filesDir.canWrite()}")
 
-                val pb = ProcessBuilder(binary.absolutePath)
+                // 通过 sh -c 执行，绕过 SELinux 对直接 exec 二进制的限制
+                val pb = ProcessBuilder("sh", "-c", binary.absolutePath)
                 pb.directory(filesDir)
                 pb.environment()["PORT"] = PORT
                 pb.environment()["FORCE_MOBILE"] = "1"
@@ -133,8 +134,16 @@ class GoService(private val context: Context) {
             }
 
             // 设置可执行权限
+            // Android SELinux 可能阻止 File.setExecutable 生效，用 chmod 兜底
             val execResult = outFile.setExecutable(true, false)
             Log.i(TAG, "setExecutable result: $execResult, canExecute: ${outFile.canExecute()}")
+
+            if (!outFile.canExecute()) {
+                Log.w(TAG, "setExecutable failed, trying chmod 755")
+                val chmod = Runtime.getRuntime().exec(arrayOf("chmod", "755", outFile.absolutePath))
+                val chmodExit = chmod.waitFor()
+                Log.i(TAG, "chmod exit: $chmodExit, canExecute: ${outFile.canExecute()}")
+            }
 
             // 验证 ELF 头（Linux ARM 二进制的魔数是 0x7f454c46）
             val header = outFile.readBytes().take(4).toByteArray()
